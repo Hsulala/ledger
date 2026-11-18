@@ -1,0 +1,16 @@
+{
+  "name": "ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "帳房（ledger）進銷存對帳系統",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "wrangler dev",
+    "migrate:local": "wrangler d1 migrations apply LEDGER_DB --local",
+    "migrate:remote": "wrangler d1 migrations apply LEDGER_DB --remote",
+    "deploy": "wrangler deploy"
+  },
+  "engines": { "node": ">=22.5" },
+  "devDependencies": { "wrangler": "^4.151.3" }
+}

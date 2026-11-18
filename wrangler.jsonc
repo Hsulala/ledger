@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ledger",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-21",
+  // 頁面與前端程式是公開靜態檔（不含任何資料）；API、登入、檔案一律先經過程式檢查
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": ["/api/*", "/auth/*", "/f/*"]
+  },
+  // 建立後把 database_id 換成實際值：npx wrangler d1 create ledger
+  "d1_databases": [
+    { "binding": "DB", "database_name": "ledger", "database_id": "REPLACE_AFTER_D1_CREATE", "migrations_dir": "migrations" }
+  ],
+  // 私有 bucket：npx wrangler r2 bucket create ledger-files（不開公開網址，檔案只經由程式簽名連結讀取）
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "ledger-files" }],
+  "observability": { "enabled": true }
+  // Secrets（npx wrangler secret put 名稱）：
+  //   SESSION_SECRET            至少 32 字元，用來簽檔案連結
+  //   ADMIN_PASSWORD            後台第一次登入時建立管理者用（之後可在資料庫改密碼）；ADMIN_USERNAME 選填，預設 admin
+  //   LINE_LOGIN_CHANNEL_ID、LINE_LOGIN_CHANNEL_SECRET   LINE Login channel（Callback URL：https://<網址>/auth/line/callback）
+  // 不要設定 DEV_LOGIN，它只給本機測試用。
+}
