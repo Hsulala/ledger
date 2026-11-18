@@ -160,3 +160,21 @@ test('店家負責人可以改自己店的主題色；格式錯誤被拒絕；/a
   assert.equal((await call(env, 'PATCH', '/api/store/theme', { cookie: a.cookie, body: { theme_color: null } })).status, 200);
   assert.equal((await call(env, 'GET', '/api/me', { cookie: a.cookie })).data.store.theme_color, null);
 });
+
+test('後台預覽：只有後台能用；沒有負責人時拒絕；預覽階段只能進該店並留稽核', async () => {
+  const env = createEnv();
+  const login = await call(env, 'POST', '/api/admin/login', { body: { username: 'admin', password: 'admin-password-1' } });
+  const cookie = login.cookie;
+  await call(env, 'POST', '/api/admin/stores', { cookie, body: { id: 'mamie', name: 'Mamie 的店' } });
+  await call(env, 'POST', '/api/admin/stores', { cookie, body: { id: 'other', name: '別家' } });
+  assert.equal((await call(env, 'POST', '/api/admin/stores/mamie/preview', { body: {} })).status, 401);
+  assert.equal((await call(env, 'POST', '/api/admin/stores/mamie/preview', { cookie, body: {} })).status, 409);
+  await call(env, 'POST', '/api/admin/stores/mamie/users', { cookie, body: { display_name: 'Mamie' } });
+  const pv = await call(env, 'POST', '/api/admin/stores/mamie/preview', { cookie, body: {} });
+  assert.equal(pv.status, 200);
+  const me = await call(env, 'GET', '/api/me', { cookie: pv.cookie });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.store.id, 'mamie');
+  assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'admin.preview' AND store_id = 'mamie'").get().n, 1);
+  assert.equal((await call(env, 'POST', '/api/admin/stores/nope/preview', { cookie, body: {} })).status, 404);
+});

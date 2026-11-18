@@ -5,12 +5,12 @@ export const ADMIN_COOKIE = 'ledger_admin';
 export const STORE_COOKIE = 'ledger_session';
 const TTL_SEC = { admin: 12 * 3600, store: 14 * 24 * 3600 };
 
-export async function issueSession(db, kind, ids, url) {
+export async function issueSession(db, kind, ids, url, ttlSec = TTL_SEC[kind]) {
   const token = randomToken(32);
-  const expiresAt = new Date(Date.now() + TTL_SEC[kind] * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + ttlSec * 1000).toISOString();
   await db.system.createSession({ tokenHash: await sha256Hex(token), kind, ...ids, expiresAt });
   const name = kind === 'admin' ? ADMIN_COOKIE : STORE_COOKIE;
-  return cookie(name, token, { maxAgeSec: TTL_SEC[kind], secure: url.protocol === 'https:' });
+  return cookie(name, token, { maxAgeSec: ttlSec, secure: url.protocol === 'https:' });
 }
 
 export const clearCookie = (kind, url) =>

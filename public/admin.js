@@ -62,6 +62,9 @@ async function showStore(box, store) {
       h('tbody', {}, Object.entries(modules).map(([key, m]) => h('tr', {}, h('td', {}, m.label),
         h('td', {}, m.state === 'unsupported' ? h('span', { class: 'tag' }, '尚未支援') : h('label', {}, h('input', { type: 'checkbox', checked: m.enabled, onchange: async (e) => { try { await api('PUT', `/api/admin/stores/${store.id}/modules`, { modules: { [key]: e.target.checked } }); say(`${m.label}：${e.target.checked ? '已開啟' : '已關閉'}`); } catch (err) { say(err.message, true); e.target.checked = !e.target.checked; } } }), ' 開啟')))))),
     h('h2', {}, '使用者'),
+    h('p', {}, h('button', { class: 'btn', onclick: async () => {
+      try { await api('POST', `/api/admin/stores/${store.id}/preview`, {}); window.open('/', '_blank'); say('已開啟店家端預覽（2 小時有效）。預覽中的操作會以該店負責人名義記錄。'); } catch (e) { say(e.message, true); }
+    } }, '以店家負責人身分預覽'), h('span', { class: 'muted' }, '　不需要 LINE，預覽中輸入的資料是真實資料')),
     h('table', {}, h('thead', {}, h('tr', {}, ['名稱', '角色', 'LINE 綁定', '狀態'].map((t) => h('th', {}, t)))),
       h('tbody', {}, users.map((u) => h('tr', {}, h('td', {}, u.display_name), h('td', {}, u.role === 'owner' ? '負責人' : '一般使用者'), h('td', {}, u.bound ? '已綁定' : '尚未綁定'), h('td', {}, u.status))))),
     h('div', { class: 'bar', style: 'margin-top:12px' }, userName, role,

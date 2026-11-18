@@ -98,6 +98,17 @@ add('PUT', '/api/admin/stores/:id/modules', 'admin', async (ctx) => {
   await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'modules.update', entity: 'store', entityId: ctx.params.id, detail: changes });
   return { modules: await getModules(ctx.db, ctx.params.id) };
 });
+// 後台以店家負責人身分預覽（2 小時）。以該店第一位啟用中的負責人建立店家端階段，並留稽核紀錄。
+// 預覽中做的操作會以該負責人名義留下紀錄。
+add('POST', '/api/admin/stores/:id/preview', 'admin', async (ctx) => {
+  const store = await ctx.db.system.getStore(ctx.params.id);
+  if (!store) throw new HttpError(404, '找不到這家店');
+  if (store.status !== 'active') throw new HttpError(409, '這家店目前不是啟用狀態');
+  const owner = (await ctx.db.system.listUsers(ctx.params.id)).find((u) => u.role === 'owner' && u.status === 'active');
+  if (!owner) throw new HttpError(409, '請先在這家店建立一位負責人');
+  await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', userId: owner.id, action: 'admin.preview', entity: 'store_user', entityId: owner.id });
+  return withCookie(json({ ok: true }), await issueSession(ctx.db, 'store', { storeId: ctx.params.id, userId: owner.id }, ctx.url, 2 * 3600));
+});
 add('GET', '/api/admin/stores/:id/users', 'admin', async (ctx) => ({ users: await ctx.db.system.listUsers(ctx.params.id) }));
 // 建立店家使用者並產生一次性綁定連結（7 天有效）。連結只會在這一次回應中出現。
 add('POST', '/api/admin/stores/:id/users', 'admin', async (ctx) => {
