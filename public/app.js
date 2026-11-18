@@ -59,6 +59,11 @@ async function loadMasters() {
 }
 const nameOf = (list, id) => (state.masters[list] ?? []).find((r) => r.id === id)?.name ?? '';
 const cid = () => state.companyId;
+// 依記住的選擇或第一家公司決定目前公司；建立買方公司後也要呼叫
+function pickCompany() {
+  const list = state.me.companies;
+  state.companyId = list.find((c) => c.id === state.companyId)?.id ?? list.find((c) => c.id === recall('ledger_company'))?.id ?? list[0]?.id ?? null;
+}
 
 // ---------- 版面 ----------
 const NAV = [['upload', '上傳'], ['pending', '待確認'], ['purchases', '進貨'], ['orders', '訂單'], ['settings', '設定']];
@@ -342,7 +347,7 @@ async function settingsView(tab = 'companies') {
       h('tbody', {}, rows.map((r) => h('tr', {}, ...cfg.cols.map((c) => h('td', {}, display(r, c))), h('td', {}, r.active === 0 ? h('span', { class: 'tag' }, '停用') : ''))))),
     owner ? h('div', { class: 'card', style: 'margin-top:16px' }, h('h2', { style: 'margin-top:0' }, `新增${cfg.label}`), h('div', { class: 'grid' }, ...cfg.fields.map(formInput)),
       h('p', {}, h('button', { class: 'btn primary', onclick: async () => {
-        try { await api('POST', `/api/master/${tab}`, draft); if (tab === 'companies') state.me = await api('GET', '/api/me'); await loadMasters(); route(); } catch (e) { msg.replaceChildren(h('div', { class: 'notice err' }, e.message + (e.data?.fields ? `（${Object.values(e.data.fields).join('、')}）` : ''))); }
+        try { await api('POST', `/api/master/${tab}`, draft); if (tab === 'companies') { state.me = await api('GET', '/api/me'); pickCompany(); } await loadMasters(); route(); } catch (e) { msg.replaceChildren(h('div', { class: 'notice err' }, e.message + (e.data?.fields ? `（${Object.values(e.data.fields).join('、')}）` : ''))); }
       } }, '新增'))) : h('p', { class: 'muted' }, '只有負責人可以新增或修改設定。'),
     themeBox));
 }
@@ -366,7 +371,7 @@ async function route() {
 async function start() {
   try { state.me = await api('GET', '/api/me'); } catch (e) { if (e.status === 401) return loginView(); throw e; }
   applyTheme(state.me.store.theme_color);
-  state.companyId = state.me.companies.find((c) => c.id === recall('ledger_company'))?.id ?? state.me.companies[0]?.id ?? null;
+  pickCompany();
   await loadMasters();
   window.addEventListener('hashchange', route);
   route();
