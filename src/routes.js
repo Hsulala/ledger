@@ -10,6 +10,7 @@ import { MASTER_KINDS, checkReferences, parseDocument, parseFileIds, parseMaster
 import { KINDS, confirmDocument, createDocument, findDuplicates, getDocument, listDocuments, updateDocument } from './db/documents.js';
 import { checkLink, readFile, signLink, uploadFiles } from './files.js';
 import { learnAliases } from './db/ai.js';
+import { overview } from './db/overview.js';
 import { DEFAULT_MONTHLY_LIMIT, SETTING_LIMIT, rebuild, recognize, usageOf } from './ai/recognize.js';
 
 export const router = createRouter();
@@ -300,19 +301,32 @@ add('GET', '/api/c/:cid/pending', 'store', async (ctx) => {
   return { purchases, orders, files };
 });
 
+// ---------- 總覽與跨公司清單（唯讀；仍只限這家店）----------
+add('GET', '/api/overview', 'store', async (ctx) => {
+  await requireModule(ctx, 'purchaseOrders');
+  const month = ctx.url.searchParams.get('month') ?? '';
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new HttpError(400, 'month 格式必須是 YYYY-MM');
+  return { month, ...(await overview(ctx.db.scope(ctx.auth.store.id), month)) };
+});
+
+const listOptions = (q) => ({
+  status: ['draft', 'confirmed'].includes(q.get('status')) ? q.get('status') : undefined,
+  vendorId: q.get('vendor_id') || undefined, customerId: q.get('customer_id') || undefined,
+  from: q.get('from') || undefined, to: q.get('to') || undefined, q: (q.get('q') ?? '').trim().slice(0, 40) || undefined,
+  limit: Math.min(Number(q.get('limit')) || 50, 200), offset: Number(q.get('offset')) || 0,
+});
+
 for (const kind of Object.keys(KINDS)) {
   const base = `/api/c/:cid/${kind === 'purchase' ? 'purchases' : 'orders'}`;
 
+  add('GET', `/api/all/${kind === 'purchase' ? 'purchases' : 'orders'}`, 'store', async (ctx) => {
+    await requireModule(ctx, 'purchaseOrders');
+    return listDocuments(ctx.db.scope(ctx.auth.store.id), kind, listOptions(ctx.url.searchParams));
+  });
   add('GET', base, 'store', async (ctx) => {
     const s = await companyScope(ctx);
     await requireModule(ctx, 'purchaseOrders');
-    const q = ctx.url.searchParams;
-    return listDocuments(s, kind, {
-      status: ['draft', 'confirmed'].includes(q.get('status')) ? q.get('status') : undefined,
-      vendorId: q.get('vendor_id') || undefined, customerId: q.get('customer_id') || undefined,
-      from: q.get('from') || undefined, to: q.get('to') || undefined, q: (q.get('q') ?? '').trim().slice(0, 40) || undefined,
-      limit: Number(q.get('limit')) || 50, offset: Number(q.get('offset')) || 0,
-    });
+    return listDocuments(s, kind, listOptions(ctx.url.searchParams));
   });
   add('GET', `${base}/:id`, 'store', async (ctx) => {
     const s = await companyScope(ctx);

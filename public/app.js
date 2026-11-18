@@ -48,7 +48,7 @@ function applyTheme(color) {
 }
 
 // ---------- 狀態 ----------
-const state = { me: null, companyId: null, masters: {} };
+const state = { me: null, companyId: null, masters: {}, listCompany: 'all' };
 const remember = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 無痕模式等情況略過 */ } };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
@@ -57,6 +57,7 @@ async function loadMasters() {
   const results = await Promise.all(kinds.map((k) => api('GET', `/api/master/${k}`)));
   kinds.forEach((k, i) => { state.masters[k] = results[i].rows; });
 }
+const companyName = (id) => state.me.companies.find((c) => c.id === id)?.name ?? '';
 const nameOf = (list, id) => (state.masters[list] ?? []).find((r) => r.id === id)?.name ?? '';
 const cid = () => state.companyId;
 // 依記住的選擇或第一家公司決定目前公司；建立買方公司後也要呼叫
@@ -66,7 +67,7 @@ function pickCompany() {
 }
 
 // ---------- 版面 ----------
-const NAV = [['upload', '上傳'], ['pending', '待確認'], ['purchases', '進貨'], ['orders', '訂單'], ['settings', '設定']];
+const NAV = [['overview', '總覽'], ['upload', '上傳'], ['pending', '待確認'], ['purchases', '進貨'], ['orders', '訂單'], ['settings', '設定']];
 
 function shell(active, ...content) {
   const { me } = state;
@@ -75,7 +76,7 @@ function shell(active, ...content) {
   return [
     h('header', { class: 'top' },
       h('span', { class: 'brand' }, '帳房'), h('span', { class: 'store' }, me.store.name),
-      me.companies.length ? select : h('span', { class: 'muted' }, '尚未建立買方公司'),
+      !me.companies.length ? h('span', { class: 'muted' }, '尚未建立買方公司') : ['upload', 'pending'].includes(active) ? [h('span', { class: 'muted' }, '公司'), select] : null,
       h('nav', {}, NAV.map(([key, label]) => h('a', { href: `#/${key}`, class: key === active ? 'on' : '' }, label))),
       h('span', { class: 'muted' }, me.user.display_name),
       h('button', { class: 'btn small', onclick: async () => { await api('POST', '/api/auth/logout'); location.hash = ''; location.reload(); } }, '登出')),
@@ -92,6 +93,39 @@ function loginView() {
   mount(h('div', { class: 'center' }, h('h1', {}, '帳房'), h('p', { class: 'muted' }, '進銷存對帳'),
     err ? h('div', { class: 'notice err' }, messages[err] ?? '登入失敗') : null,
     h('p', {}, h('a', { class: 'btn primary', href: '/auth/line/start', style: 'display:inline-block;padding:10px 28px' }, '使用 LINE 登入'))));
+}
+
+// ---------- 總覽（跨買方公司，只統計已確認入帳的單據）----------
+async function overviewView() {
+  mount(shell('overview', h('h1', {}, '總覽'), h('p', { class: 'muted' }, '載入中…')));
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const data = await api('GET', `/api/overview?month=${month}`);
+  const byCompany = (list, id) => list.find((r) => r.company_id === id) ?? { drafts: 0, month_count: 0, month_amount: 0 };
+  const sum = (list, key) => list.reduce((t, r) => t + (r[key] ?? 0), 0);
+  const draftsAll = sum(data.purchases, 'drafts') + sum(data.orders, 'drafts');
+  const goList = (page, company) => () => { state.listCompany = company; location.hash = `#/${page}`; };
+  const card = (title, p, o, company) => h('div', { class: 'card', style: 'min-width:260px;flex:1' },
+    h('h2', { style: 'margin-top:0' }, title),
+    h('p', {}, h('span', { class: 'muted' }, `${month} 進貨　`), h('strong', {}, money(p.month_amount)), h('span', { class: 'muted' }, `　${p.month_count} 張`),
+      ' ', h('a', { href: '#/purchases', onclick: goList('purchases', company) }, '看清單')),
+    h('p', {}, h('span', { class: 'muted' }, `${month} 訂單　`), h('strong', {}, money(o.month_amount)), h('span', { class: 'muted' }, `　${o.month_count} 張`),
+      ' ', h('a', { href: '#/orders', onclick: goList('orders', company) }, '看清單')),
+    h('p', {}, p.drafts + o.drafts ? h('span', { class: 'tag warn' }, `${p.drafts + o.drafts} 張待確認`) : h('span', { class: 'muted' }, '沒有待確認的單據')));
+  const total = card('全部公司合計', { month_amount: sum(data.purchases, 'month_amount'), month_count: sum(data.purchases, 'month_count'), drafts: sum(data.purchases, 'drafts') },
+    { month_amount: sum(data.orders, 'month_amount'), month_count: sum(data.orders, 'month_count'), drafts: sum(data.orders, 'drafts') }, 'all');
+  const kindLabel = { purchase: '進貨', order: '訂單' };
+  mount(shell('overview', h('h1', {}, '總覽'),
+    draftsAll ? h('div', { class: 'notice warn' }, `有 ${draftsAll} 張單據還沒確認入帳。`, ' ', h('a', { href: '#/pending' }, '去處理')) : null,
+    h('div', { class: 'bar', style: 'align-items:stretch;flex-wrap:wrap' }, total, state.me.companies.map((c) => card(c.name, byCompany(data.purchases, c.id), byCompany(data.orders, c.id), c.id))),
+    h('h2', {}, `${month} 進貨金額前 5 名廠商`),
+    data.top_vendors.length ? h('table', {}, h('thead', {}, h('tr', {}, ['廠商', '張數', '金額'].map((t, i) => h('th', { class: i ? 'num' : '' }, t)))),
+      h('tbody', {}, data.top_vendors.map((v) => h('tr', {}, h('td', {}, nameOf('vendors', v.vendor_id)), h('td', { class: 'num' }, v.count), h('td', { class: 'num' }, money(v.amount)))))) : h('p', { class: 'muted' }, '這個月還沒有已入帳的進貨單。'),
+    h('h2', {}, '最近入帳'),
+    data.recent.length ? h('table', {}, h('thead', {}, h('tr', {}, ['公司', '類型', '單據日期', '廠商或客戶與單號', '合計'].map((t, i) => h('th', { class: i === 4 ? 'num' : '' }, t)))),
+      h('tbody', {}, data.recent.map((d) => h('tr', { class: 'click', onclick: () => { state.companyId = d.company_id; remember('ledger_company', d.company_id); location.hash = `#/doc/${d.kind}/${d.id}`; } },
+        h('td', {}, companyName(d.company_id)), h('td', {}, kindLabel[d.kind]), h('td', {}, d.doc_date ?? ''),
+        h('td', {}, `${nameOf(d.kind === 'purchase' ? 'vendors' : 'customers', d.party_id)} ${d.doc_no}`), h('td', { class: 'num' }, money(d.total_amount)))))) : h('p', { class: 'muted' }, '還沒有已入帳的單據。')));
 }
 
 // ---------- 上傳頁 ----------
@@ -178,15 +212,17 @@ async function listView(kind) {
   const body = h('div', {});
   const title = isPurchase ? '進貨' : '訂單';
   async function load() {
-    if (!cid()) return body.replaceChildren(needCompany());
+    if (!state.me.companies.length) return body.replaceChildren(needCompany());
+    const all = state.listCompany === 'all';
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries({ status: q.status, q: q.q, from: q.from, to: q.to, [isPurchase ? 'vendor_id' : 'customer_id']: q.party })) if (v) p.set(k, v);
     body.replaceChildren(h('p', { class: 'muted' }, '載入中…'));
-    const { rows, total } = await api('GET', `/api/c/${cid()}/${isPurchase ? 'purchases' : 'orders'}?${p}`);
+    const { rows, total } = await api('GET', `${all ? '/api/all' : `/api/c/${state.listCompany}`}/${isPurchase ? 'purchases' : 'orders'}?${p}`);
     body.replaceChildren(
       h('p', { class: 'muted' }, `共 ${total} 筆`),
-      h('table', {}, h('thead', {}, h('tr', {}, ['單據日期', isPurchase ? '廠商' : '客戶', isPurchase ? '類型與單號' : '銷貨單號', '合計', '狀態'].map((t, i) => h('th', { class: i === 3 ? 'num' : '' }, t)))),
-        h('tbody', {}, rows.map((d) => h('tr', { class: 'click', onclick: () => { location.hash = `#/doc/${kind}/${d.id}`; } },
+      h('table', {}, h('thead', {}, h('tr', {}, [...(all ? ['公司'] : []), '單據日期', isPurchase ? '廠商' : '客戶', isPurchase ? '類型與單號' : '銷貨單號', '合計', '狀態'].map((t) => h('th', { class: t === '合計' ? 'num' : '' }, t)))),
+        h('tbody', {}, rows.map((d) => h('tr', { class: 'click', onclick: () => { state.companyId = d.company_id; remember('ledger_company', d.company_id); location.hash = `#/doc/${kind}/${d.id}`; } },
+          all ? h('td', {}, companyName(d.company_id)) : null,
           h('td', {}, d.doc_date ?? '（未填）'), h('td', {}, isPurchase ? nameOf('vendors', d.vendor_id) : nameOf('customers', d.customer_id)),
           h('td', {}, isPurchase ? `${DOC_TYPES[d.doc_type]} ${d.vendor_doc_no}` : d.sales_no), h('td', { class: 'num' }, money(d.total_amount)),
           h('td', {}, h('span', { class: `tag ${d.status === 'confirmed' ? 'ok' : 'warn'}` }, d.status === 'confirmed' ? '已入帳' : '草稿')))))));
@@ -195,6 +231,7 @@ async function listView(kind) {
   const parties = isPurchase ? state.masters.vendors : state.masters.customers;
   const bar = h('div', { class: 'bar' },
     field('關鍵字（單號、品名、備註）', h('input', { oninput: (e) => { q.q = e.target.value; clearTimeout(bar.t); bar.t = setTimeout(load, 300); } })),
+    field('公司', h('select', { onchange: (e) => { state.listCompany = e.target.value; load(); } }, h('option', { value: 'all', selected: state.listCompany === 'all' }, '全部公司'), state.me.companies.map((c) => h('option', { value: c.id, selected: c.id === state.listCompany }, c.name)))),
     field(isPurchase ? '廠商' : '客戶', h('select', { onchange: (e) => { q.party = e.target.value; load(); } }, h('option', { value: '' }, '全部'), parties.map((v) => h('option', { value: v.id }, v.name)))),
     field('狀態', h('select', { onchange: (e) => { q.status = e.target.value; load(); } }, h('option', { value: '' }, '全部'), h('option', { value: 'draft' }, '草稿'), h('option', { value: 'confirmed' }, '已入帳'))),
     field('日期（起）', h('input', { type: 'date', onchange: (e) => { q.from = e.target.value; load(); } })),
@@ -332,7 +369,7 @@ async function docView(kind, id, query) {
       h('p', {}, '合計（元）：', totalEl, h('span', { class: 'muted' }, '　由程式加總，金額留空的行不計入')),
       h('label', { class: 'field' }, '備註', h('textarea', { rows: 2, disabled: readonly, oninput: (e) => { form.note = e.target.value; } }, form.note ?? '')),
       notice, h('div', { class: 'actions' }, ...buttons));
-    mount(shell(isPurchase ? 'purchases' : 'orders', h('h1', {}, `${isPurchase ? '進貨單' : '訂單'}${id === 'new' ? '（新增）' : ''}`), h('div', { class: 'split' }, viewer, form2)));
+    mount(shell(isPurchase ? 'purchases' : 'orders', h('h1', {}, `${isPurchase ? '進貨單' : '訂單'}${id === 'new' ? '（新增）' : ''}`, h('span', { class: 'muted', style: 'font-size:14px;font-weight:400' }, `　${companyName(cid())}`)), h('div', { class: 'split' }, viewer, form2)));
     drawItems();
   }
   render();
@@ -386,17 +423,18 @@ async function settingsView(tab = 'companies') {
 // ---------- 路由 ----------
 async function route() {
   try {
-    const [path, qs] = (location.hash.slice(1) || '/upload').split('?');
+    const [path, qs] = (location.hash.slice(1) || '/overview').split('?');
     const [, page, a, b] = path.split('/');
     const query = new URLSearchParams(qs ?? '');
+    if (page === 'overview') return await overviewView();
     if (page === 'upload') return uploadView();
     if (page === 'pending') return await pendingView();
     if (page === 'purchases') return await listView('purchase');
     if (page === 'orders') return await listView('order');
     if (page === 'doc') { if (!cid()) return mount(shell('upload', needCompany())); return await docView(a, b, query); }
     if (page === 'settings') return await settingsView(a);
-    location.hash = '#/upload';
-  } catch (e) { mount(shell('upload', h('div', { class: 'notice err' }, e.message))); }
+    location.hash = '#/overview';
+  } catch (e) { mount(shell('overview', h('div', { class: 'notice err' }, e.message))); }
 }
 
 async function start() {
