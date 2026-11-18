@@ -18,7 +18,7 @@
 2. 建立 R2 bucket `ledger-files`。
 3. 設定 secrets（wrangler secret put）：SESSION_SECRET、ADMIN_PASSWORD（及選填 ADMIN_USERNAME）、LINE_LOGIN_CHANNEL_ID、LINE_LOGIN_CHANNEL_SECRET。
 4. LINE Login channel 的 Callback URL 填 `https://<網址>/auth/line/callback`。
-5. 在 GitHub 設定 Secrets：CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID。之後每次推送到 main，測試通過會自動執行 migration 並部署。
+5. 部署由 Cloudflare Workers Builds 負責：推送到 main 即自動執行 `wrangler d1 migrations apply DB --remote && wrangler deploy`（在 Cloudflare 的建置設定中設定部署命令）。GitHub Actions 只跑測試。
 
 注意：正式環境不可設定 DEV_LOGIN。
 
