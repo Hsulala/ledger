@@ -12,7 +12,7 @@
   },
   // 建立後把 database_id 換成實際值：npx wrangler d1 create ledger
   "d1_databases": [
-    { "binding": "DB", "database_name": "ledger", "database_id": "REPLACE_AFTER_D1_CREATE", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "ledger", "database_id": "663df71e-457f-4739-9314-3af3aac000db", "migrations_dir": "migrations" }
   ],
   // 私有 bucket：npx wrangler r2 bucket create ledger-files（不開公開網址，檔案只經由程式簽名連結讀取）
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "ledger-files" }],
