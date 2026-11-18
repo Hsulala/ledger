@@ -46,7 +46,11 @@ async function dashboard() {
 }
 
 async function showStore(box, store) {
-  const [{ modules }, { users }] = await Promise.all([api('GET', `/api/admin/stores/${store.id}/modules`), api('GET', `/api/admin/stores/${store.id}/users`)]);
+  const [{ modules }, { users }, ai] = await Promise.all([api('GET', `/api/admin/stores/${store.id}/modules`), api('GET', `/api/admin/stores/${store.id}/users`), api('GET', `/api/admin/stores/${store.id}/ai`)]);
+  const limitInput = h('input', { type: 'number', min: 0, max: 100000, value: ai.limit, style: 'width:100px' });
+  const aiBox = h('div', { class: 'bar' }, h('span', {}, `本月已判讀 ${ai.used} 份，每月上限`), limitInput, h('span', {}, '份'),
+    h('button', { class: 'btn', onclick: async () => { try { await api('PUT', `/api/admin/stores/${store.id}/ai`, { limit: Number(limitInput.value) }); say('已更新每月上限'); } catch (e) { say(e.message, true); } } }, '儲存'),
+    h('span', { class: 'muted' }, `（預設 ${ai.default_limit}；到上限後該店不能再用 AI 判讀。要使用還需在上面開啟「單據判讀」）`));
   const color = h('input', { type: 'color', value: store.theme_color ?? '#3e5c76', style: 'width:64px;padding:2px' });
   const statusSel = h('select', { style: 'width:auto' }, ['active', 'paused', 'ended'].map((v) => h('option', { value: v, selected: v === store.status }, { active: '啟用', paused: '暫停', ended: '結束' }[v])));
   const linkBox = h('div', {});
@@ -61,6 +65,8 @@ async function showStore(box, store) {
     h('table', {}, h('thead', {}, h('tr', {}, ['子功能', '狀態'].map((t) => h('th', {}, t)))),
       h('tbody', {}, Object.entries(modules).map(([key, m]) => h('tr', {}, h('td', {}, m.label),
         h('td', {}, m.state === 'unsupported' ? h('span', { class: 'tag' }, '尚未支援') : h('label', {}, h('input', { type: 'checkbox', checked: m.enabled, onchange: async (e) => { try { await api('PUT', `/api/admin/stores/${store.id}/modules`, { modules: { [key]: e.target.checked } }); say(`${m.label}：${e.target.checked ? '已開啟' : '已關閉'}`); } catch (err) { say(err.message, true); e.target.checked = !e.target.checked; } } }), ' 開啟')))))),
+    h('h2', {}, '單據判讀（AI）'),
+    aiBox,
     h('h2', {}, '使用者'),
     h('p', {}, h('button', { class: 'btn', onclick: async () => {
       try { await api('POST', `/api/admin/stores/${store.id}/preview`, {}); window.open('/', '_blank'); say('已開啟店家端預覽（2 小時有效）。預覽中的操作會以該店負責人名義記錄。'); } catch (e) { say(e.message, true); }

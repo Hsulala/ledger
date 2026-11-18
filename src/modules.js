@@ -1,7 +1,7 @@
 // 模組代碼 ledger 的子功能。supported:false 表示這一版還沒做，Hub 的對照表會顯示「尚未支援」。
 // 新子功能預設關閉；沒有存過設定的店家用 default。
 export const MODULES = {
-  documentRecognition: { label: '單據判讀', default: false, supported: false },
+  documentRecognition: { label: '單據判讀', default: false, supported: true },
   purchaseOrders: { label: '進貨訂單', default: true, supported: true },
   vendorReconcile: { label: '廠商對帳', default: false, supported: false },
   customerStatements: { label: '客戶對帳單', default: false, supported: false },

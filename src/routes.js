@@ -9,6 +9,8 @@ import { MODULE_KEYS, MODULES, getModules } from './modules.js';
 import { MASTER_KINDS, checkReferences, parseDocument, parseFileIds, parseMaster } from './validate.js';
 import { KINDS, confirmDocument, createDocument, findDuplicates, getDocument, listDocuments, updateDocument } from './db/documents.js';
 import { checkLink, readFile, signLink, uploadFiles } from './files.js';
+import { learnAliases } from './db/ai.js';
+import { DEFAULT_MONTHLY_LIMIT, SETTING_LIMIT, rebuild, recognize, usageOf } from './ai/recognize.js';
 
 export const router = createRouter();
 const add = (method, path, auth, handler) => router.add(method, path, { auth }, handler);
@@ -108,6 +110,18 @@ add('POST', '/api/admin/stores/:id/preview', 'admin', async (ctx) => {
   if (!owner) throw new HttpError(409, '請先在這家店建立一位負責人');
   await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', userId: owner.id, action: 'admin.preview', entity: 'store_user', entityId: owner.id });
   return withCookie(json({ ok: true }), await issueSession(ctx.db, 'store', { storeId: ctx.params.id, userId: owner.id }, ctx.url, 2 * 3600));
+});
+add('GET', '/api/admin/stores/:id/ai', 'admin', async (ctx) => {
+  if (!(await ctx.db.system.getStore(ctx.params.id))) throw new HttpError(404, '找不到這家店');
+  return { ...(await usageOf(ctx.db, ctx.params.id)), default_limit: DEFAULT_MONTHLY_LIMIT };
+});
+add('PUT', '/api/admin/stores/:id/ai', 'admin', async (ctx) => {
+  if (!(await ctx.db.system.getStore(ctx.params.id))) throw new HttpError(404, '找不到這家店');
+  const { limit } = await readJson(ctx.request);
+  if (!Number.isInteger(limit) || limit < 0 || limit > 100000) throw new HttpError(400, '每月上限必須是 0 到 100000 的整數');
+  await ctx.db.system.setSetting(ctx.params.id, SETTING_LIMIT, limit);
+  await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'ai.limit', entity: 'store', entityId: ctx.params.id, detail: { limit } });
+  return { ...(await usageOf(ctx.db, ctx.params.id)) };
 });
 add('GET', '/api/admin/stores/:id/users', 'admin', async (ctx) => ({ users: await ctx.db.system.listUsers(ctx.params.id) }));
 // 建立店家使用者並產生一次性綁定連結（7 天有效）。連結只會在這一次回應中出現。
@@ -255,6 +269,26 @@ add('GET', '/f/:fid', 'store', async (ctx) => {
 });
 
 // ---------- 待確認、進貨單、訂單 ----------
+// ---------- 單據判讀（AI 只讀欄位；金額、日期換算與比對由程式處理；產生的一律是草稿）----------
+add('GET', '/api/c/:cid/ai-usage', 'store', async (ctx) => {
+  await companyScope(ctx);
+  const modules = await getModules(ctx.db, ctx.auth.store.id);
+  return { enabled: modules.documentRecognition.enabled, ...(await usageOf(ctx.db, ctx.auth.store.id)) };
+});
+add('POST', '/api/c/:cid/recognize', 'store', async (ctx) => {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'purchaseOrders');
+  await requireModule(ctx, 'documentRecognition');
+  const body = await readJson(ctx.request);
+  const result = await recognize({ env: ctx.env, db: ctx.db, scope: s, store: ctx.auth.store, userId: ctx.auth.user.id, fileIds: parseFileIds(body), fetchImpl: ctx.env.FETCH_IMPL });
+  return json(result);
+});
+add('POST', '/api/c/:cid/extractions/:eid/build', 'store', async (ctx) => {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'purchaseOrders');
+  return json(await rebuild({ scope: s, db: ctx.db, store: ctx.auth.store, userId: ctx.auth.user.id, extractionId: ctx.params.eid }));
+});
+
 add('GET', '/api/c/:cid/pending', 'store', async (ctx) => {
   const s = await companyScope(ctx);
   await requireModule(ctx, 'purchaseOrders');
@@ -323,6 +357,7 @@ for (const kind of Object.keys(KINDS)) {
     const duplicates = await findDuplicates(s, kind, doc, doc.id);
     if (duplicates.length && body.acknowledge_duplicate !== true) throw new HttpError(409, '已有相同單號的單據，請確認是否重複', { duplicates });
     if (!(await confirmDocument(s, kind, doc.id, ctx.auth.user.id))) throw new HttpError(409, '這張單據已經確認入帳');
+    if (kind === 'purchase') await learnAliases(s, doc.vendor_id, doc.items).catch(() => {});
     return { ok: true };
   });
 }

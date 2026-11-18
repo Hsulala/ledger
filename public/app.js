@@ -100,6 +100,31 @@ function uploadView() {
   const input = h('input', { type: 'file', multiple: true, accept: 'image/jpeg,image/png,image/webp,application/pdf', class: 'hidden' });
   const zone = h('div', { class: 'dropzone' }, h('p', {}, '把單據照片拖到這裡，或'), h('button', { class: 'btn', onclick: () => input.click() }, '選擇檔案'), h('p', { class: 'muted' }, '可一次多張；JPEG、PNG、WebP 或 PDF，每個檔案 15 MB 內'));
 
+  const aiReady = cid() ? api('GET', `/api/c/${cid()}/ai-usage`).catch(() => ({ enabled: false })) : Promise.resolve({ enabled: false });
+
+  async function recognizeNow(ids, button) {
+    button.disabled = true;
+    result.append(h('p', { class: 'muted', id: 'ai-wait' }, 'AI 判讀中，通常需要 10 到 40 秒…'));
+    const finish = () => { button.disabled = false; document.getElementById('ai-wait')?.remove(); };
+    const show = (node) => result.append(node);
+    try {
+      const r = await api('POST', `/api/c/${cid()}/recognize`, { file_ids: ids });
+      finish();
+      handleResult(r, ids, button);
+    } catch (e) { finish(); show(h('div', { class: 'notice err' }, e.message)); }
+  }
+  function handleResult(r, ids, button) {
+    if (r.status === 'draft') { location.hash = `#/doc/${r.kind}/${r.id}`; return; }
+    const box = h('div', { class: 'notice warn' }, r.message);
+    if (r.status === 'need_vendor' || r.status === 'need_customer') {
+      box.append(h('p', {}, h('a', { class: 'btn', href: `#/settings/${r.status === 'need_vendor' ? 'vendors' : 'customers'}` }, '到設定新增'), ' ',
+        h('button', { class: 'btn primary', onclick: async () => {
+          try { const again = await api('POST', `/api/c/${cid()}/extractions/${r.extraction_id}/build`, {}); handleResult(again, ids, button); } catch (e) { box.append(h('div', { class: 'notice err' }, e.message)); }
+        } }, '建好了，重新比對')));
+    }
+    result.append(box);
+  }
+
   async function send(files) {
     if (!files.length) return;
     result.replaceChildren(h('p', { class: 'muted' }, `上傳中（${files.length} 個檔案）…`));
@@ -107,6 +132,7 @@ function uploadView() {
     for (const f of files) form.append('files', f);
     try {
       const { files: out } = await api('POST', `/api/c/${cid()}/files`, form);
+      const ai = await aiReady;
       const ok = out.filter((f) => f.id);
       const fresh = ok.filter((f) => !f.duplicate);
       const ids = [...new Set(ok.map((f) => f.id))];
@@ -115,8 +141,10 @@ function uploadView() {
           h('tbody', {}, out.map((f) => h('tr', {}, h('td', {}, f.name), h('td', {}, f.error ? h('span', { class: 'tag warn' }, f.error) : f.duplicate ? h('span', { class: 'tag warn' }, '重複，已有相同照片') : h('span', { class: 'tag ok' }, '已上傳')))))),
         ids.length ? h('div', { class: 'actions', style: 'position:static;border:0' },
           h('span', { class: 'muted' }, `${fresh.length} 張新照片，${ok.length - fresh.length} 張重複`),
-          h('a', { class: 'btn primary', href: `#/doc/purchase/new?files=${ids.join(',')}` }, '建立進貨單'),
-          h('a', { class: 'btn', href: `#/doc/order/new?files=${ids.join(',')}` }, '建立訂單')) : null);
+          ai.enabled ? (() => { const b = h('button', { class: 'btn primary' }, 'AI 判讀（這些檔案視為同一份單據）'); b.addEventListener('click', () => recognizeNow(ids, b)); return b; })() : null,
+          h('a', { class: 'btn', href: `#/doc/purchase/new?files=${ids.join(',')}` }, '手動建立進貨單'),
+          h('a', { class: 'btn', href: `#/doc/order/new?files=${ids.join(',')}` }, '手動建立訂單')) : null,
+        ai.enabled ? h('p', { class: 'muted' }, `本月已判讀 ${ai.used} / ${ai.limit} 份。AI 只負責讀欄位，金額加總由系統計算，讀完一定先是草稿，要你確認才入帳。`) : null);
     } catch (e) { result.replaceChildren(h('div', { class: 'notice err' }, e.message)); }
   }
   input.addEventListener('change', () => send([...input.files]));
@@ -213,7 +241,8 @@ async function docView(kind, id, query) {
     const num = (key, parse) => cell('w-num', input({ get: () => it[key], set: (v) => { it[key] = parse(v); }, flagKey: key, flagStore: it.flagsObj, inputmode: 'decimal', class: 'num' }));
     const productSel = h('select', { disabled: readonly, class: 'w-name' }, h('option', { value: '' }, '（未對應商品）'),
       state.masters.products.map((p) => h('option', { value: p.id, selected: p.id === it.product_id }, p.name)));
-    productSel.addEventListener('change', () => { it.product_id = productSel.value || null; });
+    if (it.flagsObj.product_id && !readonly) productSel.classList.add('flag');
+    productSel.addEventListener('change', () => { it.product_id = productSel.value || null; delete it.flagsObj.product_id; productSel.classList.remove('flag'); });
     const lineSel = h('select', { disabled: readonly }, Object.entries(LINES).map(([v, t]) => h('option', { value: v, selected: v === it.line_type }, t)));
     lineSel.addEventListener('change', () => { it.line_type = lineSel.value; });
     return h('tr', {},
@@ -295,6 +324,7 @@ async function docView(kind, id, query) {
       : ['類型', '品名（單上寫法）', '對應商品', '數量', '單位', '單價（元）', '金額（元）', ''];
     const form2 = h('div', {},
       readonly ? h('div', { class: 'notice' }, '這張單已確認入帳，不能再修改。') : null,
+      !readonly && (form.note ?? '').startsWith('【判讀提醒】') ? h('div', { class: 'notice warn' }, 'AI 讀完這張單據，請對照左邊照片檢查標黃的欄位。', h('br'), form.note) : null,
       h('div', { class: 'grid' }, ...hdr),
       h('h2', {}, '品項'),
       h('div', { style: 'overflow-x:auto' }, h('table', { class: 'items' }, h('thead', {}, h('tr', {}, head.map((t) => h('th', {}, t)))), itemsBody)),
@@ -310,10 +340,10 @@ async function docView(kind, id, query) {
 
 // ---------- 設定 ----------
 const SETTINGS = {
-  companies: { label: '買方公司', cols: [['name', '名稱'], ['tax_id', '統編']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填）']] },
-  vendors: { label: '廠商', cols: [['name', '名稱'], ['category', '類別']], fields: [['name', '名稱'], ['category', '類別', 'category']] },
+  companies: { label: '買方公司', cols: [['name', '名稱'], ['tax_id', '統編']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
+  vendors: { label: '廠商', cols: [['name', '名稱'], ['tax_id', '統編'], ['category', '類別']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填；填了 AI 判讀會更準）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list'], ['category', '類別', 'category']] },
   products: { label: '商品', cols: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['pack_per_case', '每箱包數']], fields: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['pack_per_case', '每箱包數', 'int']] },
-  customers: { label: '客戶', cols: [['code', '代號'], ['name', '名稱']], fields: [['code', '客戶代號'], ['name', '名稱']] },
+  customers: { label: '客戶', cols: [['code', '代號'], ['name', '名稱']], fields: [['code', '客戶代號'], ['name', '名稱'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
   aliases: { label: '品名對照', cols: [['vendor_id', '廠商', 'vendor'], ['raw_name', '單上寫法'], ['product_id', '對應商品', 'product']], fields: [['vendor_id', '廠商', 'vendor'], ['raw_name', '單上寫法'], ['product_id', '對應商品', 'product']] },
 };
 async function settingsView(tab = 'companies') {
@@ -330,8 +360,9 @@ async function settingsView(tab = 'companies') {
     else if (kind === 'vendor') el = h('select', {}, h('option', { value: '' }, '請選擇'), state.masters.vendors.map((v) => h('option', { value: v.id }, v.name)));
     else if (kind === 'product') el = h('select', {}, h('option', { value: '' }, '請選擇'), state.masters.products.map((v) => h('option', { value: v.id }, v.name)));
     else el = h('input', {});
-    el.addEventListener('input', () => { draft[key] = kind === 'int' ? (el.value === '' ? null : Number(el.value)) : el.value; });
-    el.addEventListener('change', () => { draft[key] = kind === 'int' ? (el.value === '' ? null : Number(el.value)) : el.value; });
+    const read = () => (kind === 'int' ? (el.value === '' ? null : Number(el.value)) : kind === 'list' ? el.value.split(/[、,，]/).map((x) => x.trim()).filter(Boolean) : el.value);
+    el.addEventListener('input', () => { draft[key] = read(); });
+    el.addEventListener('change', () => { draft[key] = read(); });
     return h('label', { class: 'field' }, label, el);
   };
   const tabs = h('p', {}, Object.entries(SETTINGS).map(([k, v]) => h('a', { class: `btn small ${k === tab ? 'primary' : ''}`, href: `#/settings/${k}`, style: 'margin-right:6px' }, v.label)));

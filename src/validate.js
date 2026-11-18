@@ -116,9 +116,9 @@ export function parseFileIds(body) {
 }
 
 const MASTER = {
-  vendors: { table: 'vendors', fields: { name: ['str', 60, true], category: ['enum', CATEGORIES, true], active: ['bool'] }, searchOrder: [['name', 'asc']] },
+  vendors: { table: 'vendors', fields: { name: ['str', 60, true], category: ['enum', CATEGORIES, true], tax_id: ['taxid'], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   products: { table: 'products', fields: { sku: ['str', 30], name: ['str', 80, true], category: ['enum', CATEGORIES], unit: ['str', 10], pack_per_case: ['posint'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
-  customers: { table: 'customers', fields: { code: ['str', 30], name: ['str', 60, true], active: ['bool'] }, searchOrder: [['name', 'asc']] },
+  customers: { table: 'customers', fields: { code: ['str', 30], name: ['str', 60, true], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   companies: { table: 'companies', fields: { name: ['str', 60, true], tax_id: ['taxid'], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   aliases: { table: 'vendor_item_aliases', fields: { vendor_id: ['id', true], raw_name: ['str', 80, true], vendor_sku: ['str', 40], product_id: ['id', true] }, searchOrder: [['raw_name', 'asc']] },
 };

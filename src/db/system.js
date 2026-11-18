@@ -25,6 +25,11 @@ export function createSystem(d1) {
       const res = await q(`UPDATE stores SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`, ...params, nowIso(), id).run();
       return Number(res.meta.changes);
     },
+    async getSetting(storeId, key) { return (await one('SELECT value FROM store_settings WHERE store_id = ? AND key = ?', storeId, key))?.value ?? null; },
+    async setSetting(storeId, key, value) {
+      await q(`INSERT INTO store_settings (store_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT (store_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, storeId, key, String(value), nowIso()).run();
+    },
     getModuleRows: (storeId) => all('SELECT module_key, enabled FROM store_modules WHERE store_id = ?', storeId),
     async setModules(storeId, changes) {
       const t = nowIso();

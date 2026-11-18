@@ -44,6 +44,23 @@ await s.create('products', { sku: 'CF-02', name: '原味鳳爪', unit: '箱', pa
 await s.create('customers', { code: 'A001', name: '瑞哥古亭店', created_at: t });
 void c1; void v1; void p1;
 
+// 本機預覽用的假 AI：不連外網，回傳一份固定的範例判讀結果（正式站不會有這段）
+await db.system.setModules('mamie', { documentRecognition: true });
+env.ANTHROPIC_API_KEY = 'dev';
+env.FETCH_IMPL = async () => Response.json({
+  content: [{ type: 'tool_use', name: 'record_document', input: {
+    doc_kind: 'purchase_delivery', doc_title: '出貨單', vendor_name: '欣洲食品有限公司', buyer_name: '翔慧有限公司', doc_no: '1151001A01000002',
+    date_text: '115/10/01', tax_mode: 'excl', printed_total: 99000,
+    items: [
+      { name: '辣鳳爪', cases: 36, packs: 1080, unit: '箱', unit_price: 114, amount: 34200 },
+      { name: '原味鴨舌', packs: 12500, unit: '支', amount: 6250, uncertain_fields: ['unit_price'] },
+      { name: '運費', line_type: 'freight', amount: 300 },
+    ],
+    uncertain_fields: ['doc_no'], handwritten_notes: ['33250+1663'],
+  } }],
+  usage: { input_tokens: 1800, output_tokens: 350 },
+});
+
 createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://localhost:${port}`);
