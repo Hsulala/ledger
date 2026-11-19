@@ -109,3 +109,23 @@ tbody tr.click:hover { background: var(--surface); }
   header.top nav a { white-space: nowrap; }
 }
 input.bad { border-color: #c0392b; background: #fdecea; }
+
+/* 客戶對帳單 */
+.st-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.statement { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+.st-company { margin: 0; font-size: 18px; text-align: center; } .st-title { margin: 2px 0 8px; font-size: 22px; text-align: center; }
+.st-meta { font-size: 13px; margin: 0 0 10px; }
+.st-table th, .st-table td { padding: 5px 6px; font-size: 13px; }
+.st-table tr.doc-head td { border-top: 1px solid var(--line); font-weight: 600; }
+.st-table tr.doc-items > td { padding: 0 6px 6px 18px; border: 0; }
+.st-table table.inner th, .st-table table.inner td { padding: 2px 6px; font-size: 12px; background: transparent; border: 0; }
+.doc-note { font-size: 12px; color: var(--muted); padding: 2px 6px; }
+.st-table tr.prev td, .st-table tr.sum td { background: var(--accent-soft); font-weight: 600; }
+@media (max-width: 1100px) { .st-layout { grid-template-columns: 1fr; } }
+@media print {
+  header.top, .no-print, .st-side { display: none !important; }
+  body { background: #fff; } main { max-width: none; padding: 0; }
+  .st-layout { display: block; } .statement { border: 0; padding: 0; }
+  .st-table thead { display: table-header-group; } .st-table tr { break-inside: avoid; }
+  .st-table th, .st-table td { font-size: 11px; padding: 3px 4px; }
+}

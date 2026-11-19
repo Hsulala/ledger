@@ -11,7 +11,7 @@ const TABLES = {
   source_files: 'co', extractions: 0,
   purchases: 'co', purchase_items: 0, orders: 'co', order_items: 0,
   returns: 'co', daily_notes: 'co', vendor_payments: 'co', vendor_statements: 'co', statement_lines: 0, statement_diffs: 0,
-  customer_payments: 'co', customer_statements: 'co',
+  customer_payments: 'co', customer_statements: 'co', customer_openings: 'co',
   audit_log: 0, store_users: 0, ai_usage: 0,
 };
 const NO_ID = new Set(['vendor_formats']);

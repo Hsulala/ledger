@@ -12,6 +12,8 @@ import { checkLink, readFile, signLink, uploadFiles } from './files.js';
 import { learnAliases } from './db/ai.js';
 import { overview } from './db/overview.js';
 import { insertMaster, splitByExisting } from './db/import.js';
+import { setOpening } from './db/statements.js';
+import { MONTH_RE, statementList, statementOf } from './statement/service.js';
 import { NORMALIZERS } from './import/master.js';
 import { DEFAULT_MONTHLY_LIMIT, SETTING_LIMIT, rebuild, recognize, usageOf } from './ai/recognize.js';
 
@@ -329,6 +331,59 @@ add('GET', '/api/c/:cid/pending', 'store', async (ctx) => {
 });
 
 // ---------- 總覽與跨公司清單（唯讀；仍只限這家店）----------
+// ---------- 客戶對帳單（應收）----------
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+async function statementCtx(ctx) {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'customerStatements');
+  const month = ctx.url.searchParams.get('month') ?? '';
+  if (!MONTH_RE.test(month)) throw new HttpError(400, '月份格式必須是 YYYY-MM');
+  return { s, month };
+}
+add('GET', '/api/c/:cid/statements', 'store', async (ctx) => {
+  const { s, month } = await statementCtx(ctx);
+  return { month, rows: await statementList(s, month) };
+});
+add('GET', '/api/c/:cid/statement', 'store', async (ctx) => {
+  const { s, month } = await statementCtx(ctx);
+  const customerId = ctx.url.searchParams.get('customer_id') ?? '';
+  const result = customerId ? await statementOf(s, customerId, month) : null;
+  if (!result) throw new HttpError(404, '找不到這個客戶');
+  const company = await ctx.db.scope(ctx.auth.store.id).get('companies', ctx.params.cid);
+  return { company: { id: company.id, name: company.name, tax_id: company.tax_id }, prepared_by: ctx.auth.user.display_name, ...result };
+});
+add('POST', '/api/c/:cid/customer-payments', 'store', async (ctx) => {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'customerStatements');
+  const b = await readJson(ctx.request);
+  if (!(await s.allCompanies().get('customers', b.customer_id))) throw new HttpError(400, '找不到這個客戶', { fields: { customer_id: '找不到這個客戶' } });
+  if (!DATE_RE.test(b.paid_on ?? '')) throw new HttpError(400, '收款日期格式必須是 YYYY-MM-DD', { fields: { paid_on: '日期格式不正確' } });
+  if (!Number.isInteger(b.amount) || b.amount <= 0 || b.amount > 1_000_000_000) throw new HttpError(400, '金額必須是大於 0 的整數', { fields: { amount: '金額必須是大於 0 的整數' } });
+  const id = await s.create('customer_payments', { customer_id: b.customer_id, paid_on: b.paid_on, amount: b.amount, method: String(b.method ?? '').slice(0, 20), note: String(b.note ?? '').slice(0, 200), created_at: nowIso() });
+  await ctx.db.system.audit(ctx.auth.store.id, { actorKind: 'user', userId: ctx.auth.user.id, action: 'payment.create', entity: 'customer_payment', entityId: id, detail: { customer_id: b.customer_id, paid_on: b.paid_on, amount: b.amount } });
+  return json({ id }, 201);
+});
+add('DELETE', '/api/c/:cid/customer-payments/:pid', 'owner', async (ctx) => {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'customerStatements');
+  const row = await s.get('customer_payments', ctx.params.pid);
+  if (!row) throw new HttpError(404, '找不到這筆收款');
+  await s.deleteStmt('customer_payments', row.id).run();
+  await ctx.db.system.audit(ctx.auth.store.id, { actorKind: 'user', userId: ctx.auth.user.id, action: 'payment.delete', entity: 'customer_payment', entityId: row.id, detail: { customer_id: row.customer_id, paid_on: row.paid_on, amount: row.amount } });
+  return { ok: true };
+});
+add('PUT', '/api/c/:cid/customer-opening', 'owner', async (ctx) => {
+  const s = await companyScope(ctx);
+  await requireModule(ctx, 'customerStatements');
+  const b = await readJson(ctx.request);
+  if (!(await s.allCompanies().get('customers', b.customer_id))) throw new HttpError(400, '找不到這個客戶');
+  if (!DATE_RE.test(b.as_of ?? '')) throw new HttpError(400, '截至日期格式必須是 YYYY-MM-DD');
+  if (!Number.isInteger(b.amount) || Math.abs(b.amount) > 1_000_000_000) throw new HttpError(400, '金額必須是整數');
+  await setOpening(s, { customerId: b.customer_id, asOf: b.as_of, amount: b.amount, at: nowIso() });
+  await ctx.db.system.audit(ctx.auth.store.id, { actorKind: 'user', userId: ctx.auth.user.id, action: 'opening.set', entity: 'customer_opening', entityId: b.customer_id, detail: { as_of: b.as_of, amount: b.amount } });
+  return { ok: true };
+});
+
 add('GET', '/api/overview', 'store', async (ctx) => {
   await requireModule(ctx, 'purchaseOrders');
   const month = ctx.url.searchParams.get('month') ?? '';

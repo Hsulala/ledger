@@ -45,7 +45,7 @@ await s.create('customers', { code: 'A001', name: '瑞哥古亭店', created_at:
 void c1; void v1; void p1;
 
 // 本機預覽用的假 AI：不連外網，回傳一份固定的範例判讀結果（正式站不會有這段）
-await db.system.setModules('mamie', { documentRecognition: true });
+await db.system.setModules('mamie', { documentRecognition: true, customerStatements: true });
 env.ANTHROPIC_API_KEY = 'dev';
 env.FETCH_IMPL = async () => Response.json({
   content: [{ type: 'tool_use', name: 'record_document', input: {

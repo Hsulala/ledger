@@ -118,7 +118,7 @@ export function parseFileIds(body) {
 const MASTER = {
   vendors: { table: 'vendors', fields: { name: ['str', 60, true], category: ['enum', CATEGORIES, true], tax_id: ['taxid'], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   products: { table: 'products', fields: { sku: ['str', 30], name: ['str', 80, true], category: ['enum', CATEGORIES], unit: ['str', 10], pack_per_case: ['posint'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
-  customers: { table: 'customers', fields: { code: ['str', 30], name: ['str', 60, true], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
+  customers: { table: 'customers', fields: { code: ['str', 30], name: ['str', 60, true], aliases: ['strlist'], billing_day: ['day'], tax_rate_pct: ['pct'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   companies: { table: 'companies', fields: { name: ['str', 60, true], tax_id: ['taxid'], aliases: ['strlist'], active: ['bool'] }, searchOrder: [['name', 'asc']] },
   aliases: { table: 'vendor_item_aliases', fields: { vendor_id: ['id', true], raw_name: ['str', 80, true], vendor_sku: ['str', 40], product_id: ['id', true] }, searchOrder: [['raw_name', 'asc']] },
 };
@@ -139,6 +139,8 @@ export function parseMaster(kind, body, { partial }) {
       if (v === null && !requiredFlag) out[name] = null; else if (!arg.includes(v)) f.bad(name, '選項不正確'); else out[name] = v;
     } else if (type === 'bool') out[name] = v ? 1 : 0;
     else if (type === 'posint') { if (v === null || v === '') out[name] = null; else if (!Number.isInteger(v) || v < 1) f.bad(name, '必須是正整數'); else out[name] = v; }
+    else if (type === 'day') { if (v === null || v === '' || v === 0) out[name] = null; else if (!Number.isInteger(v) || v < 1 || v > 28) f.bad(name, '結帳日必須是 1 到 28，空白代表月底'); else out[name] = v; }
+    else if (type === 'pct') { if (v === null || v === '') out[name] = 0; else if (!Number.isInteger(v) || v < 0 || v > 20) f.bad(name, '稅率必須是 0 到 20 的整數'); else out[name] = v; }
     else if (type === 'taxid') { if (!v) out[name] = null; else if (!/^\d{8}$/.test(String(v))) f.bad(name, '統編必須是 8 位數字'); else out[name] = String(v); }
     else if (type === 'strlist') { if (!Array.isArray(v) || v.length > 10 || v.some((x) => typeof x !== 'string')) f.bad(name, '格式不正確'); else out[name] = JSON.stringify(v.map((x) => x.trim()).filter(Boolean)); }
     else if (type === 'id') { if (typeof v !== 'string' || !v) f.bad(name, '必填'); else out[name] = v; }

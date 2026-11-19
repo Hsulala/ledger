@@ -4,7 +4,7 @@ export const MODULES = {
   documentRecognition: { label: '單據判讀', default: false, supported: true },
   purchaseOrders: { label: '進貨訂單', default: true, supported: true },
   vendorReconcile: { label: '廠商對帳', default: false, supported: false },
-  customerStatements: { label: '客戶對帳單', default: false, supported: false },
+  customerStatements: { label: '客戶對帳單', default: false, supported: true },
   webQuery: { label: '網頁查詢', default: true, supported: true },
   logisticsExport: { label: '物流匯出', default: false, supported: false },
 };

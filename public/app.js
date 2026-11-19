@@ -95,7 +95,7 @@ function pickCompany() {
 }
 
 // ---------- 版面 ----------
-const NAV = [['overview', '總覽'], ['upload', '上傳'], ['pending', '待確認'], ['purchases', '進貨'], ['orders', '訂單'], ['settings', '設定']];
+const NAV = [['overview', '總覽'], ['upload', '上傳'], ['pending', '待確認'], ['purchases', '進貨'], ['orders', '訂單'], ['statements', '對帳單'], ['settings', '設定']];
 
 function shell(active, ...content) {
   const { me } = state;
@@ -104,8 +104,8 @@ function shell(active, ...content) {
   return [
     h('header', { class: 'top' },
       h('span', { class: 'brand' }, '帳房'), h('span', { class: 'store' }, me.store.name),
-      !me.companies.length ? h('span', { class: 'muted' }, '尚未建立買方公司') : ['upload', 'pending'].includes(active) ? [h('span', { class: 'muted' }, '公司'), select] : null,
-      h('nav', {}, NAV.map(([key, label]) => h('a', { href: `#/${key}`, class: key === active ? 'on' : '' }, label))),
+      !me.companies.length ? h('span', { class: 'muted' }, '尚未建立買方公司') : ['upload', 'pending', 'statements'].includes(active) ? [h('span', { class: 'muted' }, '公司'), select] : null,
+      h('nav', {}, NAV.filter(([key]) => key !== 'statements' || me.modules?.customerStatements?.enabled).map(([key, label]) => h('a', { href: `#/${key}`, class: key === active ? 'on' : '' }, label))),
       h('span', { class: 'muted' }, me.user.display_name),
       h('button', { class: 'btn small', onclick: async () => { await api('POST', '/api/auth/logout'); location.hash = ''; location.reload(); } }, '登出')),
     h('main', {}, ...content),
@@ -405,6 +405,95 @@ async function docView(kind, id, query) {
   render();
 }
 
+
+// ---------- 客戶對帳單（應收）----------
+const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+const slashDate = (d) => (d ? d.replaceAll('-', '/') : '');
+const shiftMonth = (month, delta) => { const [y, m] = month.split('-').map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+const billingText = (day) => (day ? `每月 ${day} 日` : '月底');
+
+async function statementsView(monthParam) {
+  if (!cid()) return mount(shell('statements', needCompany()));
+  const month = /^\d{4}-\d{2}$/.test(monthParam ?? '') ? monthParam : (recall('ledger_stmt_month') ?? thisMonth());
+  remember('ledger_stmt_month', month);
+  mount(shell('statements', h('h1', {}, '客戶對帳單'), h('p', { class: 'muted' }, '載入中…')));
+  const { rows } = await api('GET', `/api/c/${cid()}/statements?month=${month}`);
+  const monthInput = h('input', { type: 'month', value: month, style: 'width:auto' });
+  monthInput.addEventListener('change', () => { if (monthInput.value) location.hash = `#/statements?month=${monthInput.value}`; });
+  const total = rows.reduce((t, r) => t + r.grand_unpaid, 0);
+  mount(shell('statements', h('h1', {}, '客戶對帳單'),
+    h('p', { class: 'muted' }, `${companyName(cid())}。每位請款客戶依自己的結帳日取區間（月底，或每月固定日），本月沒有交易但還有欠款的客戶也會列出。`),
+    h('div', { class: 'bar' }, h('label', { class: 'field' }, '月份（結帳區間結束的月份）', monthInput), h('span', { class: 'muted' }, `共 ${rows.length} 位客戶，未收合計 ${money(total)}`)),
+    rows.length ? h('table', {}, h('thead', {}, h('tr', {}, ['代號', '請款客戶', '結帳日', '區間', '本期筆數', '本期應收', '前期', '未收合計'].map((t, i) => h('th', { class: i >= 4 ? 'num' : '' }, t)))),
+      h('tbody', {}, rows.map((r) => h('tr', { class: 'click', onclick: () => { location.hash = `#/statement/${r.customer_id}?month=${month}`; } },
+        h('td', {}, r.code ?? ''), h('td', {}, r.name), h('td', {}, billingText(r.billing_day)), h('td', {}, `${slashDate(r.start)}～${slashDate(r.end)}`),
+        h('td', { class: 'num' }, r.doc_count), h('td', { class: 'num' }, money(r.receivable)), h('td', { class: 'num' }, money(r.prev_balance)), h('td', { class: 'num' }, money(r.grand_unpaid)))))) : h('p', { class: 'muted' }, '這個月沒有需要對帳的客戶。確認入帳的訂單才會出現在這裡。')));
+}
+
+async function statementView(customerId, monthParam, flash) {
+  if (!cid()) return mount(shell('statements', needCompany()));
+  const month = /^\d{4}-\d{2}$/.test(monthParam ?? '') ? monthParam : thisMonth();
+  mount(shell('statements', h('p', { class: 'muted' }, '載入中…')));
+  const st = await api('GET', `/api/c/${cid()}/statement?customer_id=${customerId}&month=${month}`);
+  const owner = state.me.user.role === 'owner';
+  const msg = h('div', { class: 'no-print' });
+  const say = (text, err) => msg.replaceChildren(h('div', { class: `notice ${err ? 'err' : ''}` }, text));
+  const reload = (note) => statementView(customerId, month, note);
+  if (flash) say(flash);
+  const guard = (fn) => async () => { try { await fn(); } catch (e) { say(e.message + (e.data?.fields ? `（${Object.values(e.data.fields).join('、')}）` : ''), true); } };
+  const today = new Date().toISOString().slice(0, 10);
+
+  const doc = (r) => [
+    h('tr', { class: 'doc-head' }, h('td', {}, slashDate(r.doc_date)), h('td', {}, r.sales_no), h('td', {}, r.salesperson), h('td', {}, r.invoice_no),
+      h('td', { class: 'num' }, money(r.amount)), h('td', { class: 'num' }, money(r.tax)), h('td', { class: 'num' }, money(r.receivable)), h('td', { class: 'num' }, money(r.paid)), h('td', { class: 'num' }, money(r.unpaid))),
+    h('tr', { class: 'doc-items' }, h('td', { colspan: 9 },
+      h('table', { class: 'inner' }, h('thead', {}, h('tr', {}, ['品號／品名', '數量', '單位', '單價', '金額'].map((t, i) => h('th', { class: i ? 'num' : '' }, t)))),
+        h('tbody', {}, r.items.map((it) => h('tr', {}, h('td', {}, it.sku ? `${it.sku}／${it.product_name ?? it.raw_name}` : it.raw_name), h('td', { class: 'num' }, it.qty ?? ''), h('td', { class: 'num' }, it.unit),
+          h('td', { class: 'num' }, it.unit_price_x100 === null ? '' : (it.unit_price_x100 / 100).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })), h('td', { class: 'num' }, money(it.amount)))))),
+      [r.shop, r.note].filter(Boolean).length ? h('div', { class: 'doc-note' }, `備註：${[r.shop, r.note].filter(Boolean).join(' ')}`) : null)),
+  ];
+
+  const sheet = h('div', { class: 'statement' },
+    h('h2', { class: 'st-company' }, st.company.name), h('h1', { class: 'st-title' }, '應收帳款對帳單'),
+    h('p', { class: 'st-meta' }, `請款客戶：${st.customer.name}${st.customer.code ? `（${st.customer.code}）` : ''}　單據日期：${slashDate(st.start)}～${slashDate(st.end)}　製表：${st.prepared_by} ${slashDate(today)}`),
+    h('table', { class: 'st-table' },
+      h('thead', {}, h('tr', {}, ['單據日期', '來源單號', '業務', '發票號碼', '金額', '稅額', '應收金額', '已收金額', '未收金額'].map((t, i) => h('th', { class: i >= 4 ? 'num' : '' }, t)))),
+      h('tbody', {},
+        h('tr', { class: 'prev' }, h('td', { colspan: 8 }, `前期：${st.prev_paid_in_period ? `（本期已沖 ${money(st.prev_paid_in_period)}）` : ''}`), h('td', { class: 'num' }, money(st.prev_balance))),
+        ...(st.rows.length ? st.rows.flatMap(doc) : [h('tr', {}, h('td', { colspan: 9, class: 'muted' }, '本期沒有已入帳的單據。'))]),
+        h('tr', { class: 'sum' }, h('td', { colspan: 4 }, `總應收（未收－預收）：${money(st.grand_unpaid)}　預收金額：${money(st.prepaid)}　合計：`),
+          h('td', { class: 'num' }, money(st.totals.amount)), h('td', { class: 'num' }, money(st.totals.tax)), h('td', { class: 'num' }, money(st.totals.receivable)), h('td', { class: 'num' }, money(st.totals.paid)), h('td', { class: 'num' }, money(st.grand_unpaid))))));
+
+  // 右側：設定、期初餘額、收款（列印時不顯示）
+  const dayInput = h('input', { type: 'number', min: 1, max: 28, value: st.customer.billing_day ?? '', placeholder: '空白＝月底', style: 'width:120px' });
+  const rate = h('select', { style: 'width:auto' }, [0, 5].map((v) => h('option', { value: v, selected: v === st.customer.tax_rate_pct }, v === 0 ? '免稅／不加稅（0%）' : '5%')));
+  const saveSettings = guard(async () => { await api('PUT', `/api/master/customers/${st.customer.id}`, { billing_day: dayInput.value === '' ? null : Number(dayInput.value), tax_rate_pct: Number(rate.value) }); await loadMasters(); await reload(); });
+  const openDate = h('input', { type: 'date', value: st.opening?.as_of ?? '' }), openAmt = h('input', { type: 'number', value: st.opening?.amount ?? '', placeholder: '未收餘額' });
+  const saveOpening = guard(async () => { await api('PUT', `/api/c/${cid()}/customer-opening`, { customer_id: st.customer.id, as_of: openDate.value, amount: Number(openAmt.value) }); await reload(); });
+  const payDate = h('input', { type: 'date', value: today }), payAmt = h('input', { type: 'number', min: 1, placeholder: '金額' });
+  const payMethod = h('select', { style: 'width:auto' }, ['匯款', '現金', '支票', '其他'].map((v) => h('option', { value: v }, v))), payNote = h('input', { placeholder: '備註（選填）' });
+  const addPayment = guard(async () => { await api('POST', `/api/c/${cid()}/customer-payments`, { customer_id: st.customer.id, paid_on: payDate.value, amount: Number(payAmt.value), method: payMethod.value, note: payNote.value }); await reload(payDate.value > st.end ? '已登錄收款。收款日在這一期結束之後，會從下一期對帳單開始沖前期，這一期的數字不變。' : '已登錄收款。'); });
+  const side = h('div', { class: 'no-print st-side' },
+    h('div', { class: 'card' }, h('h3', { style: 'margin-top:0' }, '收款登錄'), h('p', { class: 'muted' }, '收到的款依先進先出沖銷最早的欠款；沖完還有剩下的記為預收。'),
+      h('div', { class: 'grid' }, h('label', { class: 'field' }, '收款日', payDate), h('label', { class: 'field' }, '金額', payAmt), h('label', { class: 'field' }, '方式', payMethod), h('label', { class: 'field' }, '備註', payNote)),
+      h('p', {}, h('button', { class: 'btn primary', onclick: addPayment }, '登錄收款')),
+      st.payments.length ? h('table', {}, h('thead', {}, h('tr', {}, ['日期', '金額', '方式', ''].map((t) => h('th', {}, t)))),
+        h('tbody', {}, [...st.payments].reverse().slice(0, 10).map((p) => h('tr', {}, h('td', {}, slashDate(p.paid_on)), h('td', { class: 'num' }, money(p.amount)), h('td', {}, p.method ?? ''),
+          h('td', {}, owner ? h('button', { class: 'btn small ghost', onclick: guard(async () => { if (confirm('確定刪除這筆收款？')) { await api('DELETE', `/api/c/${cid()}/customer-payments/${p.id}`); await reload(); } }) }, '刪除') : null))))) : null),
+    owner ? h('div', { class: 'card' }, h('h3', { style: 'margin-top:0' }, '這位客戶的設定'), h('div', { class: 'grid' }, h('label', { class: 'field' }, '結帳日（每月幾號截止）', dayInput), h('label', { class: 'field' }, '稅率', rate)),
+      h('p', {}, h('button', { class: 'btn', onclick: saveSettings }, '儲存設定')),
+      h('hr'), h('h3', {}, '期初未收餘額（前期）'), h('p', { class: 'muted' }, '剛從鼎新切過來時，填入這位客戶在切換日前還沒收的總額。'),
+      h('div', { class: 'grid' }, h('label', { class: 'field' }, '截至日期', openDate), h('label', { class: 'field' }, '未收餘額', openAmt)),
+      h('p', {}, h('button', { class: 'btn', onclick: saveOpening }, '儲存期初餘額'))) : null);
+
+  mount(shell('statements',
+    h('div', { class: 'bar no-print' }, h('a', { class: 'btn small', href: `#/statements?month=${month}` }, '回清單'),
+      h('a', { class: 'btn small', href: `#/statement/${st.customer.id}?month=${shiftMonth(month, -1)}` }, '上個月'), h('strong', {}, month),
+      h('a', { class: 'btn small', href: `#/statement/${st.customer.id}?month=${shiftMonth(month, 1)}` }, '下個月'),
+      h('button', { class: 'btn primary', onclick: () => window.print() }, '列印／存成 PDF')),
+    msg, h('div', { class: 'st-layout' }, sheet, side)));
+}
+
 // ---------- 設定 ----------
 const SETTINGS = {
   companies: { label: '買方公司', cols: [['name', '名稱'], ['tax_id', '統編']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
@@ -470,6 +559,8 @@ async function route() {
     const query = new URLSearchParams(qs ?? '');
     if (page === 'overview') return await overviewView();
     if (page === 'upload') return uploadView();
+    if (page === 'statements') return await statementsView(query.get('month'));
+    if (page === 'statement') return await statementView(a, query.get('month'));
     if (page === 'pending') return await pendingView();
     if (page === 'purchases') return await listView('purchase');
     if (page === 'orders') return await listView('order');
