@@ -5,7 +5,7 @@ import { call, createEnv, purchaseBody, seedStore } from './helpers/app.js';
 async function setup() {
   const env = createEnv();
   const a = await seedStore(env, { id: 'alpha', name: '甲店' });
-  return { env, a, co: a.companyIds['翔慧'], other: a.companyIds['翔瑋'] };
+  return { env, a, co: a.companyIds['翔慧'], other: a.companyIds['翔媁'] };
 }
 
 test('手動輸入一張進貨單：建立草稿、修改、確認入帳、清單與搜尋', async () => {

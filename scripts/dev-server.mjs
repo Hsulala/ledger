@@ -36,7 +36,7 @@ const userId = await db.system.createUserWithInvite({ storeId: 'mamie', displayN
 d1.raw.prepare('UPDATE store_users SET line_user_id = ? WHERE id = ?').run('U-dev', userId);
 const s = db.scope('mamie');
 const c1 = await s.create('companies', { name: '翔慧', created_at: t });
-await s.create('companies', { name: '翔瑋', created_at: t });
+await s.create('companies', { name: '翔媁', created_at: t });
 const v1 = await s.create('vendors', { name: '欣洲', category: 'chicken_feet', created_at: t });
 await s.create('vendors', { name: '宏海', category: 'bedding', created_at: t });
 const p1 = await s.create('products', { sku: 'CF-01', name: '辣鳳爪', unit: '箱', pack_per_case: 30, category: 'chicken_feet', created_at: t });

@@ -27,7 +27,7 @@ export async function call(env, method, path, { body, cookie, headers = {}, form
 }
 
 // 建立一家店、一位已綁定的負責人、兩家買方公司；回傳登入用 cookie
-export async function seedStore(env, { id, name, userName = '負責人', role = 'owner', companies = ['翔慧', '翔瑋'] }) {
+export async function seedStore(env, { id, name, userName = '負責人', role = 'owner', companies = ['翔慧', '翔媁'] }) {
   const db = getDb(env);
   await db.system.createStore({ id, name });
   const tokenHash = `h-${id}-${role}`;

@@ -85,7 +85,7 @@ test('照片連結：本店登入者才拿得到；他店、未登入、過期�
 
 test('單據附檔：照片掛到單據、確認後變成已歸檔；不能掛別家店或別家公司的檔案', async () => {
   const { env, a, b, co } = await setup();
-  const other = a.companyIds['翔瑋'];
+  const other = a.companyIds['翔媁'];
   const up = await call(env, 'POST', `/api/c/${co}/files`, { cookie: a.cookie, form: formOf(['p1.jpg', jpeg(5)], ['p2.jpg', jpeg(6)]) });
   const [p1, p2] = up.data.files.map((f) => f.id);
   const id = (await call(env, 'POST', `/api/c/${co}/purchases`, { cookie: a.cookie, body: purchaseBody(a, { file_ids: [p1, p2] }) })).data.id;

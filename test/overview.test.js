@@ -6,14 +6,14 @@ async function setup() {
   const env = createEnv();
   const a = await seedStore(env, { id: 'alpha', name: '甲店' });
   const b = await seedStore(env, { id: 'beta', name: '乙店' });
-  const [c1, c2] = [a.companyIds['翔慧'], a.companyIds['翔瑋']];
+  const [c1, c2] = [a.companyIds['翔慧'], a.companyIds['翔媁']];
   const make = async (store, co, body, confirm) => {
     const r = await call(env, 'POST', `/api/c/${co}/purchases`, { cookie: store.cookie, body });
     assert.equal(r.status, 201);
     if (confirm) assert.equal((await call(env, 'POST', `/api/c/${co}/purchases/${r.data.id}/confirm`, { cookie: store.cookie, body: { acknowledge_duplicate: true } })).status, 200);
     return r.data.id;
   };
-  // 甲店：翔慧 11 月兩張入帳（34,500 與 300）、一張草稿；翔瑋 11 月一張入帳；10 月一張入帳
+  // 甲店：翔慧 11 月兩張入帳（34,500 與 300）、一張草稿；翔媁 11 月一張入帳；10 月一張入帳
   await make(a, c1, purchaseBody(a, { vendor_doc_no: 'N1' }), true);
   await make(a, c1, purchaseBody(a, { vendor_doc_no: 'N2', items: [{ line_type: 'freight', raw_name: '運費', amount: 300 }] }), true);
   await make(a, c1, purchaseBody(a, { vendor_doc_no: 'N3' }), false);

@@ -58,7 +58,7 @@ test('跨店隔離：甲店使用者讀不到、改不到乙店的任何資料',
 test('兩家買方公司分開：甲公司的單據不會出現在乙公司的清單', async () => {
   const env = createEnv();
   const a = await seedStore(env, { id: 'alpha', name: '甲店' });
-  const c1 = a.companyIds['翔慧'], c2 = a.companyIds['翔瑋'];
+  const c1 = a.companyIds['翔慧'], c2 = a.companyIds['翔媁'];
   const one = await call(env, 'POST', `/api/c/${c1}/purchases`, { cookie: a.cookie, body: purchaseBody(a) });
   await call(env, 'POST', `/api/c/${c2}/purchases`, { cookie: a.cookie, body: purchaseBody(a, { vendor_doc_no: 'S-777' }) });
 
