@@ -108,3 +108,4 @@ tbody tr.click:hover { background: var(--surface); }
   header.top nav { order: 10; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; }
   header.top nav a { white-space: nowrap; }
 }
+input.bad { border-color: #c0392b; background: #fdecea; }

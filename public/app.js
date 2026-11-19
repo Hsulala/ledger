@@ -56,6 +56,34 @@ async function loadMasters() {
   const kinds = ['vendors', 'products', 'customers'];
   const results = await Promise.all(kinds.map((k) => api('GET', `/api/master/${k}`)));
   kinds.forEach((k, i) => { state.masters[k] = results[i].rows; });
+  buildDatalists();
+}
+
+// 商品、客戶有上千筆，下拉選單不好用，改成輸入名稱或代號搜尋（原生 datalist，整份只建一次）
+const labelOf = {
+  vendors: (r) => r.name,
+  products: (r) => (r.sku ? `${r.name}（${r.sku}）` : r.name),
+  customers: (r) => (r.code ? `${r.name}（${r.code}）` : r.name),
+};
+function buildDatalists() {
+  for (const kind of Object.keys(labelOf)) {
+    document.getElementById(`dl-${kind}`)?.remove();
+    const dl = h('datalist', { id: `dl-${kind}` }, (state.masters[kind] ?? []).filter((r) => r.active !== 0).map((r) => h('option', { value: labelOf[kind](r) })));
+    document.body.append(dl);
+  }
+}
+function picker(kind, { value, onpick, disabled, className, placeholder = '輸入名稱或代號搜尋' }) {
+  const rows = state.masters[kind] ?? [];
+  const byLabel = new Map(rows.map((r) => [labelOf[kind](r), r.id]));
+  const current = rows.find((r) => r.id === value);
+  const el = h('input', { list: `dl-${kind}`, value: current ? labelOf[kind](current) : '', disabled, class: className, placeholder, autocomplete: 'off' });
+  el.addEventListener('change', () => {
+    const text = el.value.trim();
+    if (!text) { el.classList.remove('bad'); onpick(null); return; }
+    const id = byLabel.get(text);
+    if (id) { el.classList.remove('bad'); onpick(id); } else el.classList.add('bad'); // 沒選到清單裡的項目：不改變原本的選擇
+  });
+  return el;
 }
 const companyName = (id) => state.me.companies.find((c) => c.id === id)?.name ?? '';
 const nameOf = (list, id) => (state.masters[list] ?? []).find((r) => r.id === id)?.name ?? '';
@@ -228,11 +256,10 @@ async function listView(kind) {
           h('td', {}, h('span', { class: `tag ${d.status === 'confirmed' ? 'ok' : 'warn'}` }, d.status === 'confirmed' ? '已入帳' : '草稿')))))));
   }
   const field = (label, el) => h('label', { class: 'field' }, label, el);
-  const parties = isPurchase ? state.masters.vendors : state.masters.customers;
   const bar = h('div', { class: 'bar' },
     field('關鍵字（單號、品名、備註）', h('input', { oninput: (e) => { q.q = e.target.value; clearTimeout(bar.t); bar.t = setTimeout(load, 300); } })),
     field('公司', h('select', { onchange: (e) => { state.listCompany = e.target.value; load(); } }, h('option', { value: 'all', selected: state.listCompany === 'all' }, '全部公司'), state.me.companies.map((c) => h('option', { value: c.id, selected: c.id === state.listCompany }, c.name)))),
-    field(isPurchase ? '廠商' : '客戶', h('select', { onchange: (e) => { q.party = e.target.value; load(); } }, h('option', { value: '' }, '全部'), parties.map((v) => h('option', { value: v.id }, v.name)))),
+    field(isPurchase ? '廠商' : '客戶', picker(isPurchase ? 'vendors' : 'customers', { value: q.party, placeholder: '全部', onpick: (id) => { q.party = id ?? ''; load(); } })),
     field('狀態', h('select', { onchange: (e) => { q.status = e.target.value; load(); } }, h('option', { value: '' }, '全部'), h('option', { value: 'draft' }, '草稿'), h('option', { value: 'confirmed' }, '已入帳'))),
     field('日期（起）', h('input', { type: 'date', onchange: (e) => { q.from = e.target.value; load(); } })),
     field('日期（迄）', h('input', { type: 'date', onchange: (e) => { q.to = e.target.value; load(); } })),
@@ -272,14 +299,17 @@ async function docView(kind, id, query) {
     return h('label', { class: 'field' }, label, el);
   };
 
+  const headerPicker = (label, key, kind) => {
+    const el = picker(kind, { value: form[key], disabled: readonly, className: flags[key] ? 'flag' : '', onpick: (id) => { form[key] = id ?? ''; delete flags[key]; el.classList.remove('flag'); } });
+    return h('label', { class: 'field' }, label, el);
+  };
+
   function recalc() { totalEl.textContent = money(items.reduce((s, i) => s + (Number.isInteger(i.amount) ? i.amount : 0), 0)); }
   function itemRow(it, index) {
     const cell = (cls, el) => h('td', { class: cls }, el);
     const num = (key, parse) => cell('w-num', input({ get: () => it[key], set: (v) => { it[key] = parse(v); }, flagKey: key, flagStore: it.flagsObj, inputmode: 'decimal', class: 'num' }));
-    const productSel = h('select', { disabled: readonly, class: 'w-name' }, h('option', { value: '' }, '（未對應商品）'),
-      state.masters.products.map((p) => h('option', { value: p.id, selected: p.id === it.product_id }, p.name)));
+    const productSel = picker('products', { value: it.product_id, disabled: readonly, className: 'w-name', placeholder: '（未對應商品）', onpick: (id) => { it.product_id = id; delete it.flagsObj.product_id; productSel.classList.remove('flag'); } });
     if (it.flagsObj.product_id && !readonly) productSel.classList.add('flag');
-    productSel.addEventListener('change', () => { it.product_id = productSel.value || null; delete it.flagsObj.product_id; productSel.classList.remove('flag'); });
     const lineSel = h('select', { disabled: readonly }, Object.entries(LINES).map(([v, t]) => h('option', { value: v, selected: v === it.line_type }, t)));
     lineSel.addEventListener('change', () => { it.line_type = lineSel.value; });
     return h('tr', {},
@@ -314,13 +344,13 @@ async function docView(kind, id, query) {
   } else viewer.append(h('div', { class: 'stage' }, h('p', { class: 'muted', style: 'padding:16px' }, '這張單沒有附原始照片（手動輸入）。')));
 
   const hdr = isPurchase
-    ? [headerSelect('廠商', 'vendor_id', [['', '請選擇'], ...state.masters.vendors.map((v) => [v.id, v.name])]),
+    ? [headerPicker('廠商', 'vendor_id', 'vendors'),
        headerSelect('單據類型', 'doc_type', Object.entries(DOC_TYPES)),
        headerField('廠商單號', 'vendor_doc_no'),
        headerField('單據日期', 'doc_date', { type: 'date' }),
        headerField('單上原始日期寫法', 'doc_date_raw', { placeholder: '例如 115/11/10' }),
        headerSelect('稅別', 'tax_mode', Object.entries(TAX))]
-    : [headerSelect('客戶', 'customer_id', [['', '請選擇'], ...state.masters.customers.map((v) => [v.id, v.name])]),
+    : [headerPicker('客戶', 'customer_id', 'customers'),
        headerField('銷貨單號', 'sales_no'), headerField('單據日期', 'doc_date', { type: 'date' }),
        headerField('業務', 'salesperson'), headerField('發票號碼（事後回填）', 'invoice_no')];
 
@@ -378,9 +408,9 @@ async function docView(kind, id, query) {
 // ---------- 設定 ----------
 const SETTINGS = {
   companies: { label: '買方公司', cols: [['name', '名稱'], ['tax_id', '統編']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
-  vendors: { label: '廠商', cols: [['name', '名稱'], ['tax_id', '統編'], ['category', '類別']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填；填了 AI 判讀會更準）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list'], ['category', '類別', 'category']] },
-  products: { label: '商品', cols: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['pack_per_case', '每箱包數']], fields: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['pack_per_case', '每箱包數', 'int']] },
-  customers: { label: '客戶', cols: [['code', '代號'], ['name', '名稱']], fields: [['code', '客戶代號'], ['name', '名稱'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
+  vendors: { label: '廠商', cols: [['legacy_code', '代號'], ['name', '名稱'], ['tax_id', '統編'], ['group_name', '分類'], ['phone', '電話']], fields: [['name', '名稱'], ['tax_id', '統編（8 碼，選填；填了 AI 判讀會更準）'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list'], ['category', '類別', 'category']] },
+  products: { label: '商品', cols: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['group_name', '分類'], ['pack_per_case', '每箱包數']], fields: [['sku', '品號'], ['name', '品名'], ['unit', '單位'], ['pack_per_case', '每箱包數', 'int']] },
+  customers: { label: '客戶', cols: [['code', '代號'], ['name', '名稱'], ['customer_type', '類型'], ['bill_to_name', '請款客戶'], ['tax_id', '統編'], ['phone', '電話']], fields: [['code', '客戶代號'], ['name', '名稱'], ['aliases', '單上的其他名稱（用頓號分隔，選填）', 'list']] },
   aliases: { label: '品名對照', cols: [['vendor_id', '廠商', 'vendor'], ['raw_name', '單上寫法'], ['product_id', '對應商品', 'product']], fields: [['vendor_id', '廠商', 'vendor'], ['raw_name', '單上寫法'], ['product_id', '對應商品', 'product']] },
 };
 async function settingsView(tab = 'companies') {
@@ -394,14 +424,26 @@ async function settingsView(tab = 'companies') {
   const formInput = ([key, label, kind]) => {
     let el;
     if (kind === 'category') el = h('select', {}, h('option', { value: '' }, '請選擇'), Object.entries(CATEGORIES).map(([v, t]) => h('option', { value: v }, t)));
-    else if (kind === 'vendor') el = h('select', {}, h('option', { value: '' }, '請選擇'), state.masters.vendors.map((v) => h('option', { value: v.id }, v.name)));
-    else if (kind === 'product') el = h('select', {}, h('option', { value: '' }, '請選擇'), state.masters.products.map((v) => h('option', { value: v.id }, v.name)));
+    else if (kind === 'vendor' || kind === 'product') return h('label', { class: 'field' }, label, picker(kind === 'vendor' ? 'vendors' : 'products', { onpick: (id) => { draft[key] = id ?? ''; } }));
     else el = h('input', {});
     const read = () => (kind === 'int' ? (el.value === '' ? null : Number(el.value)) : kind === 'list' ? el.value.split(/[、,，]/).map((x) => x.trim()).filter(Boolean) : el.value);
     el.addEventListener('input', () => { draft[key] = read(); });
     el.addEventListener('change', () => { draft[key] = read(); });
     return h('label', { class: 'field' }, label, el);
   };
+  const SHOW_MAX = 200;
+  const tbody = h('tbody', {});
+  const countEl = h('span', { class: 'muted' });
+  const drawRows = (text) => {
+    const needle = text.trim().toLowerCase();
+    const hit = needle ? rows.filter((r) => cfg.cols.some((c) => String(display(r, c)).toLowerCase().includes(needle))) : rows;
+    tbody.replaceChildren(...hit.slice(0, SHOW_MAX).map((r) => h('tr', {}, ...cfg.cols.map((c) => h('td', {}, display(r, c))), h('td', {}, r.active === 0 ? h('span', { class: 'tag' }, '停用') : ''))));
+    countEl.textContent = hit.length > SHOW_MAX ? `　共 ${hit.length} 筆，只顯示前 ${SHOW_MAX} 筆，請用搜尋縮小範圍` : `　共 ${hit.length} 筆`;
+  };
+  const searchInput = h('input', { placeholder: '搜尋名稱、代號…', style: 'max-width:280px' });
+  searchInput.addEventListener('input', () => drawRows(searchInput.value));
+  const searchBar = h('div', { class: 'bar' }, searchInput, countEl);
+  drawRows('');
   const tabs = h('p', {}, Object.entries(SETTINGS).map(([k, v]) => h('a', { class: `btn small ${k === tab ? 'primary' : ''}`, href: `#/settings/${k}`, style: 'margin-right:6px' }, v.label)));
   const themeBox = owner ? h('div', { class: 'card', style: 'margin-top:24px;max-width:420px' }, h('h2', { style: 'margin-top:0' }, '主題色'),
     h('p', { class: 'muted' }, '只會改按鈕與點綴色，版面不變。'),
@@ -411,8 +453,8 @@ async function settingsView(tab = 'companies') {
       return h('div', { class: 'bar', style: 'margin:0' }, picker, h('button', { class: 'btn', onclick: () => save(picker.value.toLowerCase()) }, '套用'), h('button', { class: 'btn ghost', onclick: () => save(null) }, '還原預設'));
     })()) : null;
   mount(shell('settings', h('h1', {}, '設定'), tabs, msg,
-    h('table', {}, h('thead', {}, h('tr', {}, [...cfg.cols.map(([, t]) => h('th', {}, t)), h('th', {}, '狀態')])),
-      h('tbody', {}, rows.map((r) => h('tr', {}, ...cfg.cols.map((c) => h('td', {}, display(r, c))), h('td', {}, r.active === 0 ? h('span', { class: 'tag' }, '停用') : ''))))),
+    searchBar,
+    h('table', {}, h('thead', {}, h('tr', {}, [...cfg.cols.map(([, t]) => h('th', {}, t)), h('th', {}, '狀態')])), tbody),
     owner ? h('div', { class: 'card', style: 'margin-top:16px' }, h('h2', { style: 'margin-top:0' }, `新增${cfg.label}`), h('div', { class: 'grid' }, ...cfg.fields.map(formInput)),
       h('p', {}, h('button', { class: 'btn primary', onclick: async () => {
         try { await api('POST', `/api/master/${tab}`, draft); if (tab === 'companies') { state.me = await api('GET', '/api/me'); pickCompany(); } await loadMasters(); route(); } catch (e) { msg.replaceChildren(h('div', { class: 'notice err' }, e.message + (e.data?.fields ? `（${Object.values(e.data.fields).join('、')}）` : ''))); }

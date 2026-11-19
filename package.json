@@ -11,6 +11,11 @@
     "migrate:remote": "wrangler d1 migrations apply LEDGER_DB --remote",
     "deploy": "wrangler deploy"
   },
-  "engines": { "node": ">=22.5" },
-  "devDependencies": { "wrangler": "^4.151.3" }
+  "engines": {
+    "node": ">=22.5"
+  },
+  "devDependencies": {
+    "read-excel-file": "^9.3.17",
+    "wrangler": "^4.151.3"
+  }
 }

@@ -11,6 +11,8 @@ import { KINDS, confirmDocument, createDocument, findDuplicates, getDocument, li
 import { checkLink, readFile, signLink, uploadFiles } from './files.js';
 import { learnAliases } from './db/ai.js';
 import { overview } from './db/overview.js';
+import { insertMaster, splitByExisting } from './db/import.js';
+import { NORMALIZERS } from './import/master.js';
 import { DEFAULT_MONTHLY_LIMIT, SETTING_LIMIT, rebuild, recognize, usageOf } from './ai/recognize.js';
 
 export const router = createRouter();
@@ -124,6 +126,23 @@ add('PUT', '/api/admin/stores/:id/ai', 'admin', async (ctx) => {
   await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'ai.limit', entity: 'store', entityId: ctx.params.id, detail: { limit } });
   return { ...(await usageOf(ctx.db, ctx.params.id)) };
 });
+// 鼎新主檔匯入：先預覽（commit 不為 true，只回報告，不寫入），確認後再送一次 commit:true 才寫入。
+// 一次一種主檔（vendors／products／customers），避免單次請求太大。已存在的資料略過、不覆蓋。
+add('POST', '/api/admin/stores/:id/import/:kind', 'admin', async (ctx) => {
+  const kind = ctx.params.kind;
+  if (!NORMALIZERS[kind]) throw new HttpError(404, '找不到');
+  if (!(await ctx.db.system.getStore(ctx.params.id))) throw new HttpError(404, '找不到這家店');
+  const body = await readJson(ctx.request);
+  if (!Array.isArray(body.rows) || body.rows.length > 5000) throw new HttpError(400, '資料格式不正確（一次最多 5000 列）');
+  const { rows, issues } = NORMALIZERS[kind](body.rows);
+  const s = ctx.db.scope(ctx.params.id);
+  const { fresh, existing } = await splitByExisting(s, kind, rows);
+  const report = { kind, total: body.rows.length, importable: rows.length, new: fresh.length, existing: existing.length, issues };
+  if (body.commit !== true) return report;
+  await insertMaster(s, kind, fresh);
+  await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'import.master', entity: kind, detail: { new: fresh.length, existing: existing.length } });
+  return { ...report, committed: true };
+});
 add('GET', '/api/admin/stores/:id/users', 'admin', async (ctx) => ({ users: await ctx.db.system.listUsers(ctx.params.id) }));
 // 建立店家使用者並產生一次性綁定連結（7 天有效）。連結只會在這一次回應中出現。
 add('POST', '/api/admin/stores/:id/users', 'admin', async (ctx) => {
@@ -222,7 +241,15 @@ add('PATCH', '/api/store/theme', 'owner', async (ctx) => {
 add('GET', '/api/master/:kind', 'store', async (ctx) => {
   const cfg = MASTER_KINDS[ctx.params.kind];
   if (!cfg) throw new HttpError(404, '找不到');
-  return { rows: await ctx.db.scope(ctx.auth.store.id).list(cfg.table, { order: cfg.searchOrder, limit: 500 }) };
+  // 匯入鼎新資料後商品、客戶都上千筆，所以分頁讀完整份（單次上限 500）
+  const s = ctx.db.scope(ctx.auth.store.id);
+  const rows = [];
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const page = await s.list(cfg.table, { order: cfg.searchOrder, limit: 500, offset });
+    rows.push(...page);
+    if (page.length < 500) break;
+  }
+  return { rows };
 });
 add('POST', '/api/master/:kind', 'owner', async (ctx) => {
   const cfg = MASTER_KINDS[ctx.params.kind];
