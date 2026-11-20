@@ -20,6 +20,15 @@ import { DEFAULT_MONTHLY_LIMIT, SETTING_LIMIT, rebuild, recognize, usageOf } fro
 export const router = createRouter();
 const add = (method, path, auth, handler) => router.add(method, path, { auth }, handler);
 
+const HOST_RE = /^(?=.{4,100}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+function parseHost(value) {
+  if (value === null || value === '') return null;
+  const host = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!HOST_RE.test(host)) throw new HttpError(400, '專屬網址只能填主機名稱，例如 mamie.kulalab.app（不含 https:// 與路徑）');
+  return host;
+}
+// 綁定連結與登入必須走正確的網址：專屬網址的店只能從自己的網址；沒有專屬網址的店只能從通用網址
+const wrongHost = (ctx, storeId, storeHost) => (ctx.hostStore ? ctx.hostStore.id !== storeId : Boolean(storeHost));
 const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
 const clientIp = (request) => request.headers.get('cf-connecting-ip') ?? 'local';
 
@@ -73,11 +82,12 @@ add('POST', '/api/admin/logout', 'admin', async (ctx) => {
 });
 add('GET', '/api/admin/stores', 'admin', async (ctx) => ({ stores: await ctx.db.system.listStores(), module_keys: MODULE_KEYS }));
 add('POST', '/api/admin/stores', 'admin', async (ctx) => {
-  const { id, name, theme_color: themeColor } = await readJson(ctx.request);
+  const { id, name, theme_color: themeColor, host } = await readJson(ctx.request);
   if (typeof id !== 'string' || !/^[a-z][a-z0-9_-]{1,29}$/.test(id)) throw new HttpError(400, '店家代號需為 2 到 30 個小寫英數字（可含 - _），且以英文字母開頭');
   if (typeof name !== 'string' || !name.trim() || name.length > 60) throw new HttpError(400, '請填寫店家名稱（60 字內）');
   if (themeColor && !isHexColor(themeColor)) throw new HttpError(400, '主題色需為 #rrggbb（小寫）');
-  await ctx.db.system.createStore({ id, name: name.trim(), themeColor: themeColor || null });
+  const parsedHost = parseHost(host ?? null);
+  await ctx.db.system.createStore({ id, name: name.trim(), themeColor: themeColor || null, host: parsedHost });
   await ctx.db.system.audit(id, { actorKind: 'admin', action: 'store.create', entity: 'store', entityId: id });
   return json({ id }, 201);
 });
@@ -85,7 +95,8 @@ add('PATCH', '/api/admin/stores/:id', 'admin', async (ctx) => {
   const body = await readJson(ctx.request);
   if (body.theme_color && !isHexColor(body.theme_color)) throw new HttpError(400, '主題色需為 #rrggbb（小寫）');
   if (body.status && !['active', 'paused', 'ended'].includes(body.status)) throw new HttpError(400, '狀態不正確');
-  const n = await ctx.db.system.updateStore(ctx.params.id, { name: body.name, status: body.status, themeColor: body.theme_color === undefined ? undefined : body.theme_color || null });
+  const host = body.host === undefined ? undefined : parseHost(body.host);
+  const n = await ctx.db.system.updateStore(ctx.params.id, { name: body.name, status: body.status, themeColor: body.theme_color === undefined ? undefined : body.theme_color || null, host });
   if (!n) throw new HttpError(404, '找不到這家店');
   await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'store.update', entity: 'store', entityId: ctx.params.id, detail: body });
   return { ok: true };
@@ -151,13 +162,14 @@ add('POST', '/api/admin/stores/:id/users', 'admin', async (ctx) => {
   const { display_name: displayName, role = 'owner' } = await readJson(ctx.request);
   if (typeof displayName !== 'string' || !displayName.trim() || displayName.length > 40) throw new HttpError(400, '請填寫使用者名稱');
   if (!['owner', 'staff'].includes(role)) throw new HttpError(400, '角色不正確');
-  if (!(await ctx.db.system.getStore(ctx.params.id))) throw new HttpError(404, '找不到這家店');
+  const store = await ctx.db.system.getStore(ctx.params.id);
+  if (!store) throw new HttpError(404, '找不到這家店');
   const token = randomToken(32);
   const userId = await ctx.db.system.createUserWithInvite({
     storeId: ctx.params.id, displayName: displayName.trim(), role, tokenHash: await sha256Hex(token), expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
   });
   await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'user.invite', entity: 'store_user', entityId: userId });
-  return json({ user_id: userId, link: `${ctx.url.origin}/auth/line/start?invite=${token}` }, 201);
+  return json({ user_id: userId, link: `${store.host ? `https://${store.host}` : ctx.url.origin}/auth/line/start?invite=${token}` }, 201);
 });
 
 // ---------- LINE 登入 ----------
@@ -168,7 +180,7 @@ add('GET', '/auth/line/start', 'none', async (ctx) => {
   if (invite) {
     inviteTokenHash = await sha256Hex(invite);
     const row = await ctx.db.system.getInvite(inviteTokenHash);
-    if (!row || row.used_at || row.expires_at <= nowIso() || row.store_status !== 'active') throw new HttpError(400, '這個綁定連結無效或已使用，請向管理者重新索取');
+    if (!row || row.used_at || row.expires_at <= nowIso() || row.store_status !== 'active' || wrongHost(ctx, row.store_id, row.store_host)) throw new HttpError(400, '這個綁定連結無效或已使用，請向管理者重新索取');
   }
   const state = randomToken(24), nonce = randomToken(16);
   await ctx.db.system.saveOauthState({ stateHash: await sha256Hex(state), nonce, inviteTokenHash, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() });
@@ -187,13 +199,13 @@ add('GET', '/auth/line/callback', 'none', async (ctx) => {
   let user;
   if (saved.invite_token_hash) {
     const invite = await ctx.db.system.getInvite(saved.invite_token_hash);
-    if (!invite || invite.used_at || invite.expires_at <= nowIso()) return fail('invite');
+    if (!invite || invite.used_at || invite.expires_at <= nowIso() || wrongHost(ctx, invite.store_id, invite.store_host)) return fail('invite');
     if (!(await ctx.db.system.bindInvite(invite, identity.lineUserId))) return fail('bind');
     user = await ctx.db.system.getUser(invite.user_id);
     await ctx.db.system.audit(user.store_id, { actorKind: 'user', userId: user.id, action: 'user.bind', entity: 'store_user', entityId: user.id });
   } else {
-    // 同一個 LINE 帳號只會對應一家店（Mamie）；若有多家，取最近建立的
-    user = (await ctx.db.system.findUsersByLine(identity.lineUserId))[0];
+    // 專屬網址只找該店的使用者；若有多筆，取最近建立的
+    user = (await ctx.db.system.findUsersByLine(identity.lineUserId, ctx.hostStore?.id ?? null))[0];
     if (!user) return fail('unbound');
   }
   const cookieValue = await issueSession(ctx.db, 'store', { storeId: user.store_id, userId: user.id }, ctx.url);
@@ -203,7 +215,7 @@ add('GET', '/auth/line/callback', 'none', async (ctx) => {
 add('POST', '/api/auth/liff', 'none', async (ctx) => {
   const { id_token: idToken } = await readJson(ctx.request);
   const identity = await verifyIdToken(lineConfig(ctx.env), idToken, null);
-  const user = (await ctx.db.system.findUsersByLine(identity.lineUserId))[0];
+  const user = (await ctx.db.system.findUsersByLine(identity.lineUserId, ctx.hostStore?.id ?? null))[0];
   if (!user) throw new HttpError(403, '這個 LINE 帳號尚未綁定，請向管理者索取綁定連結');
   return withCookie(json({ ok: true }), await issueSession(ctx.db, 'store', { storeId: user.store_id, userId: user.id }, ctx.url));
 });

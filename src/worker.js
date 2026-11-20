@@ -6,6 +6,7 @@ import { HttpError, json } from './util.js';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const API_PREFIXES = ['/api/', '/auth/', '/f/'];
+const ADMIN_PAGES = new Set(['/admin.html', '/admin.js']);
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -33,6 +34,12 @@ function errorResponse(error) {
 export async function handle(request, env) {
   const url = new URL(request.url);
   const isApi = API_PREFIXES.some((p) => url.pathname.startsWith(p));
+  const isAdminPage = ADMIN_PAGES.has(url.pathname);
+
+  // 依網址決定店家：專屬網址只服務該店，不提供後台
+  const hostStore = isApi || isAdminPage ? await getDb(env).system.getStoreByHost(url.hostname.toLowerCase()) : null;
+  if (hostStore && (isAdminPage || url.pathname.startsWith('/api/admin/'))) throw new HttpError(404, '找不到');
+
   if (!isApi) {
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response('Not Found', { status: 404 });
@@ -48,13 +55,13 @@ export async function handle(request, env) {
   if (!matched) throw new HttpError(404, '找不到');
   const db = getDb(env);
   const need = matched.route.options.auth;
-  const ctx = { request, env, url, db, params: matched.params, auth: null };
+  const ctx = { request, env, url, db, params: matched.params, auth: null, hostStore };
 
   if (need === 'admin') {
     ctx.auth = await authenticateAdmin(db, request);
     if (!ctx.auth) throw new HttpError(401, '請先登入後台');
   } else if (need === 'store' || need === 'owner') {
-    ctx.auth = await authenticateStore(db, request);
+    ctx.auth = await authenticateStore(db, request, hostStore);
     if (!ctx.auth) throw new HttpError(401, '請先登入');
     if (need === 'owner' && ctx.auth.user.role !== 'owner') throw new HttpError(403, '只有負責人可以做這個操作');
   }

@@ -8,7 +8,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "none",
-    "run_worker_first": ["/api/*", "/auth/*", "/f/*"]
+    "run_worker_first": ["/api/*", "/auth/*", "/f/*", "/admin.html", "/admin.js"]
   },
   // 建立後把 database_id 換成實際值：npx wrangler d1 create ledger
   "d1_databases": [

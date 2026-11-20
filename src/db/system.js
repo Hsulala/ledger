@@ -11,16 +11,18 @@ export function createSystem(d1) {
   return {
     // 店家
     getStore: (id) => one('SELECT * FROM stores WHERE id = ?', id),
+    getStoreByHost: (host) => one('SELECT * FROM stores WHERE host = ?', host),
     listStores: () => all('SELECT * FROM stores ORDER BY created_at'),
-    async createStore({ id, name, themeColor = null }) {
+    async createStore({ id, name, themeColor = null, host = null }) {
       const t = nowIso();
-      await q('INSERT INTO stores (id, name, theme_color, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', id, name, themeColor, t, t).run();
+      await q('INSERT INTO stores (id, name, theme_color, host, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', id, name, themeColor, host, t, t).run();
     },
-    async updateStore(id, { name, status, themeColor }) {
+    async updateStore(id, { name, status, themeColor, host }) {
       const sets = [], params = [];
       if (name !== undefined) { sets.push('name = ?'); params.push(name); }
       if (status !== undefined) { sets.push('status = ?'); params.push(status); }
       if (themeColor !== undefined) { sets.push('theme_color = ?'); params.push(themeColor); }
+      if (host !== undefined) { sets.push('host = ?'); params.push(host); }
       if (!sets.length) return 0;
       const res = await q(`UPDATE stores SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`, ...params, nowIso(), id).run();
       return Number(res.meta.changes);
@@ -54,9 +56,11 @@ export function createSystem(d1) {
     // 店家使用者與綁定連結
     getUser: (id) => one('SELECT * FROM store_users WHERE id = ?', id),
     listUsers: (storeId) => all('SELECT id, display_name, role, status, line_user_id IS NOT NULL AS bound, created_at FROM store_users WHERE store_id = ? ORDER BY created_at', storeId),
-    findUsersByLine: (lineUserId) => all(
+    // 在專屬網址登入：只找該店；在通用網址登入：只找沒有專屬網址的店（有專屬網址的店必須從自己的網址登入）
+    findUsersByLine: (lineUserId, hostStoreId = null) => all(
       `SELECT u.* FROM store_users u JOIN stores s ON s.id = u.store_id
-       WHERE u.line_user_id = ? AND u.status = 'active' AND s.status = 'active' ORDER BY u.created_at DESC`, lineUserId),
+       WHERE u.line_user_id = ? AND u.status = 'active' AND s.status = 'active'
+         AND ${hostStoreId ? 'u.store_id = ?' : 's.host IS NULL'} ORDER BY u.created_at DESC`, lineUserId, ...(hostStoreId ? [hostStoreId] : [])),
     async createUserWithInvite({ storeId, displayName, role, tokenHash, expiresAt }) {
       const userId = uuid(), t = nowIso();
       await d1.batch([
@@ -66,7 +70,7 @@ export function createSystem(d1) {
       return userId;
     },
     getInvite: (tokenHash) => one(
-      `SELECT i.*, u.display_name, s.name AS store_name, s.status AS store_status FROM invites i
+      `SELECT i.*, u.display_name, s.name AS store_name, s.status AS store_status, s.host AS store_host FROM invites i
        JOIN store_users u ON u.id = i.user_id JOIN stores s ON s.id = i.store_id WHERE i.token_hash = ?`, tokenHash),
     // 綁定：連結未用過才成立（兩句同一個交易）；回傳是否成功
     async bindInvite(invite, lineUserId) {
