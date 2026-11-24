@@ -31,11 +31,13 @@ export async function authenticateAdmin(db, request) {
 }
 
 // 店家使用者：店家與帳號都必須仍是啟用狀態，停用後既有登入立刻失效
-export async function authenticateStore(db, request) {
+export async function authenticateStore(db, request, hostStore = null) {
   const hit = await load(db, request, 'store');
   if (!hit) return null;
   const user = await db.system.getUser(hit.row.user_id);
   const store = user && (await db.system.getStore(user.store_id));
   if (!user || user.status !== 'active' || !store || store.status !== 'active' || user.store_id !== hit.row.store_id) return null;
+  // 從某家店的專屬網址進來，登入的店家必須就是那一家
+  if (hostStore && store.id !== hostStore.id) return null;
   return { user, store, tokenHash: hit.tokenHash };
 }

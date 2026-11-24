@@ -22,6 +22,17 @@
 
 注意：正式環境不可設定 DEV_LOGIN。
 
+## 專屬網址（每位客戶一個網址）
+
+同一個 Worker、同一個資料庫，每家店可綁自己的網址，資料仍以 store_id 隔離。新增客戶步驟：
+
+1. Cloudflare：Workers 的 Custom Domains 新增網址（例如 mamie.kulalab.app），綁到 ledger。
+2. 後台建立店家，在「專屬網址」填同一個主機名稱（小寫、不含 https://）。
+3. LINE Login channel 的 Callback URL 加入 `https://<專屬網址>/auth/line/callback`；LIFF 的 Endpoint URL 也用專屬網址。
+4. 後台建立負責人、取得綁定連結（連結會自動使用專屬網址）、匯入主檔、開啟需要的模組。
+
+規則：專屬網址只服務該店，不提供後台（/admin.html、/api/admin/*）；有專屬網址的店不能從通用網址登入；後台只能從沒有設定專屬網址的通用網址進入。
+
 ## 規則
 
 - 資料一律經 src/db 的範圍層存取（store_id、company_id 強制帶入），測試會掃描原始碼確認。
