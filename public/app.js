@@ -424,6 +424,8 @@ async function statementsView(monthParam) {
   mount(shell('statements', h('h1', {}, '客戶對帳單'),
     h('p', { class: 'muted' }, `${companyName(cid())}。每位請款客戶依自己的結帳日取區間（月底，或每月固定日），本月沒有交易但還有欠款的客戶也會列出。`),
     h('div', { class: 'bar' }, h('label', { class: 'field' }, '月份（結帳區間結束的月份）', monthInput), h('span', { class: 'muted' }, `共 ${rows.length} 位客戶，未收合計 ${money(total)}`)),
+    h('div', { class: 'bar' }, h('label', { class: 'field' }, '找任一位客戶（設定結帳日、稅率、期初餘額；還沒有交易的客戶也能找到）',
+      picker('customers', { placeholder: '輸入客戶名稱或代號', onpick: (id) => { if (id) location.hash = `#/statement/${id}?month=${month}`; } }))),
     rows.length ? h('table', {}, h('thead', {}, h('tr', {}, ['代號', '請款客戶', '結帳日', '區間', '本期筆數', '本期應收', '前期', '未收合計'].map((t, i) => h('th', { class: i >= 4 ? 'num' : '' }, t)))),
       h('tbody', {}, rows.map((r) => h('tr', { class: 'click', onclick: () => { location.hash = `#/statement/${r.customer_id}?month=${month}`; } },
         h('td', {}, r.code ?? ''), h('td', {}, r.name), h('td', {}, billingText(r.billing_day)), h('td', {}, `${slashDate(r.start)}～${slashDate(r.end)}`),
