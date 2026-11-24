@@ -157,6 +157,32 @@ add('POST', '/api/admin/stores/:id/import/:kind', 'admin', async (ctx) => {
   return { ...report, committed: true };
 });
 add('GET', '/api/admin/stores/:id/users', 'admin', async (ctx) => ({ users: await ctx.db.system.listUsers(ctx.params.id) }));
+// 停用／啟用使用者：停用後既有登入立刻失效。不能停用店裡唯一一位啟用中的負責人（避免鎖死）。
+add('PATCH', '/api/admin/stores/:id/users/:uid', 'admin', async (ctx) => {
+  const { status } = await readJson(ctx.request);
+  if (!['active', 'disabled'].includes(status)) throw new HttpError(400, '狀態不正確');
+  const user = await ctx.db.system.getUser(ctx.params.uid);
+  if (!user || user.store_id !== ctx.params.id) throw new HttpError(404, '找不到這位使用者');
+  if (status === 'disabled' && user.role === 'owner' && user.status === 'active' && (await ctx.db.system.countActiveOwners(ctx.params.id)) <= 1) {
+    throw new HttpError(409, '這是店裡唯一一位啟用中的負責人，請先建立另一位負責人再停用');
+  }
+  await ctx.db.system.setUserStatus(ctx.params.id, user.id, status);
+  await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: status === 'disabled' ? 'user.disable' : 'user.enable', entity: 'store_user', entityId: user.id });
+  return { ok: true };
+});
+// 刪除使用者：只限沒綁定 LINE、沒有任何操作紀錄的帳號（例如建錯或測試用的）；其餘請改用停用，避免歷史紀錄對不上人。
+add('DELETE', '/api/admin/stores/:id/users/:uid', 'admin', async (ctx) => {
+  const user = await ctx.db.system.getUser(ctx.params.uid);
+  if (!user || user.store_id !== ctx.params.id) throw new HttpError(404, '找不到這位使用者');
+  if (user.role === 'owner' && user.status === 'active' && (await ctx.db.system.countActiveOwners(ctx.params.id)) <= 1) {
+    throw new HttpError(409, '這是店裡唯一一位啟用中的負責人，請先建立另一位負責人再刪除');
+  }
+  if (!(await ctx.db.system.deleteUnusedUser(ctx.params.id, user.id))) {
+    throw new HttpError(409, '這位使用者已綁定 LINE 或已有操作紀錄，不能刪除，請改用停用');
+  }
+  await ctx.db.system.audit(ctx.params.id, { actorKind: 'admin', action: 'user.delete', entity: 'store_user', entityId: user.id, detail: { display_name: user.display_name } });
+  return { ok: true };
+});
 // 建立店家使用者並產生一次性綁定連結（7 天有效）。連結只會在這一次回應中出現。
 add('POST', '/api/admin/stores/:id/users', 'admin', async (ctx) => {
   const { display_name: displayName, role = 'owner' } = await readJson(ctx.request);

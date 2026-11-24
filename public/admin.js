@@ -78,8 +78,10 @@ async function showStore(box, store) {
     h('p', {}, h('button', { class: 'btn', onclick: async () => {
       try { await api('POST', `/api/admin/stores/${store.id}/preview`, {}); window.open('/', '_blank'); say('已開啟店家端預覽（2 小時有效）。預覽中的操作會以該店負責人名義記錄。'); } catch (e) { say(e.message, true); }
     } }, '以店家負責人身分預覽'), h('span', { class: 'muted' }, '　不需要 LINE，預覽中輸入的資料是真實資料')),
-    h('table', {}, h('thead', {}, h('tr', {}, ['名稱', '角色', 'LINE 綁定', '狀態'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, users.map((u) => h('tr', {}, h('td', {}, u.display_name), h('td', {}, u.role === 'owner' ? '負責人' : '一般使用者'), h('td', {}, u.bound ? '已綁定' : '尚未綁定'), h('td', {}, u.status))))),
+    h('table', {}, h('thead', {}, h('tr', {}, ['名稱', '角色', 'LINE 綁定', '狀態', ''].map((t) => h('th', {}, t)))),
+      h('tbody', {}, users.map((u) => h('tr', {}, h('td', {}, u.display_name), h('td', {}, u.role === 'owner' ? '負責人' : '一般使用者'), h('td', {}, u.bound ? '已綁定' : '尚未綁定'), h('td', {}, u.status === 'active' ? '啟用中' : '已停用'),
+        h('td', {}, h('button', { class: 'btn', onclick: async () => { try { await api('PATCH', `/api/admin/stores/${store.id}/users/${u.id}`, { status: u.status === 'active' ? 'disabled' : 'active' }); say(u.status === 'active' ? '已停用' : '已啟用'); dashboard(); } catch (e) { say(e.message, true); } } }, u.status === 'active' ? '停用' : '啟用'),
+          ' ', h('button', { class: 'btn', onclick: async () => { if (!confirm(`刪除使用者「${u.display_name}」？只有沒綁定 LINE 且沒有任何紀錄的帳號才能刪除，刪除後無法復原。`)) return; try { await api('DELETE', `/api/admin/stores/${store.id}/users/${u.id}`); say('已刪除'); dashboard(); } catch (e) { say(e.message, true); } } }, '刪除')))))),
     h('div', { class: 'bar', style: 'margin-top:12px' }, userName, role,
       h('button', { class: 'btn primary', onclick: async () => {
         try {

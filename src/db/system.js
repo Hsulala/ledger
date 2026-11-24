@@ -69,6 +69,22 @@ export function createSystem(d1) {
       ]);
       return userId;
     },
+    // 使用者管理（後台）：停用／啟用、刪除。刪除只允許「沒綁定 LINE 且沒有任何紀錄」的帳號；其餘請用停用。
+    countActiveOwners: async (storeId) => Number((await one(`SELECT COUNT(*) AS n FROM store_users WHERE store_id = ? AND role = 'owner' AND status = 'active'`, storeId)).n),
+    async setUserStatus(storeId, userId, status) {
+      const res = await q('UPDATE store_users SET status = ? WHERE id = ? AND store_id = ?', status, userId, storeId).run();
+      if (status === 'disabled') await q('DELETE FROM sessions WHERE user_id = ?', userId).run();
+      return Number(res.meta.changes);
+    },
+    async deleteUnusedUser(storeId, userId) {
+      const none = (table, col) => `NOT EXISTS (SELECT 1 FROM ${table} WHERE store_id = ? AND ${col} = ?)`;
+      const res = await q(
+        `DELETE FROM store_users WHERE id = ? AND store_id = ? AND line_user_id IS NULL
+           AND ${none('audit_log', 'user_id')} AND ${none('purchases', 'created_by')} AND ${none('purchases', 'confirmed_by')}
+           AND ${none('orders', 'created_by')} AND ${none('orders', 'confirmed_by')} AND ${none('daily_notes', 'created_by')}`,
+        userId, storeId, ...[storeId, userId].concat([storeId, userId], [storeId, userId], [storeId, userId], [storeId, userId], [storeId, userId])).run();
+      return Number(res.meta.changes);
+    },
     getInvite: (tokenHash) => one(
       `SELECT i.*, u.display_name, s.name AS store_name, s.status AS store_status, s.host AS store_host FROM invites i
        JOIN store_users u ON u.id = i.user_id JOIN stores s ON s.id = i.store_id WHERE i.token_hash = ?`, tokenHash),
